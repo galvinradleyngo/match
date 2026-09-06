@@ -1,0 +1,19 @@
+rules_version = '2';
+
+// MATCH uses anonymous auth only (no accounts/passwords) — anyone with the
+// Firebase config can read/write, same trust model as a Kahoot/Jackbox room:
+// a short-lived room code is the access control, not a login.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /rooms/{roomCode} {
+      allow read: if true;
+      // Only signed-in (anonymous) users may create or update rooms, and a
+      // room's hostId/hostName can't be hijacked by a later write.
+      allow create: if request.auth != null
+        && request.resource.data.hostId == request.auth.uid;
+      allow update: if request.auth != null
+        && request.resource.data.hostId == resource.data.hostId;
+      allow delete: if false;
+    }
+  }
+}
