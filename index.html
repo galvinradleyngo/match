@@ -1,0 +1,1486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#a855f7">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>MATCH 🔥</title>
+<meta name="description" content="MATCH — the either/or party game. Answer, hunt for your match, watch it catch fire.">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bungee&family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+<style>
+  :root{
+    --hot-pink:#ff2d78;
+    --hot-purple:#9333ea;
+    --hot-orange:#ff8a3d;
+    --ink:#0d0d12;
+  }
+  html,body{
+    height:100%;
+    overscroll-behavior:none;
+  }
+  body{
+    font-family:'Fredoka',system-ui,sans-serif;
+    color:var(--ink);
+    min-height:100dvh;
+    background:linear-gradient(135deg,#ff2d78,#9333ea 45%,#ff8a3d);
+    background-size:300% 300%;
+    animation:gradientMove 14s ease infinite;
+    -webkit-tap-highlight-color:transparent;
+    touch-action:manipulation;
+  }
+  @keyframes gradientMove{
+    0%{background-position:0% 50%}
+    50%{background-position:100% 50%}
+    100%{background-position:0% 50%}
+  }
+  .font-stamp{font-family:'Bungee',system-ui,sans-serif; letter-spacing:.5px;}
+  .sticker{
+    background:#fff;
+    border:4px solid var(--ink);
+    border-radius:26px;
+    box-shadow:8px 8px 0 var(--ink);
+  }
+  .sticker-sm{
+    background:#fff;
+    border:3px solid var(--ink);
+    border-radius:18px;
+    box-shadow:5px 5px 0 var(--ink);
+  }
+  .btn{
+    font-family:'Fredoka',sans-serif;
+    font-weight:700;
+    border:3px solid var(--ink);
+    border-radius:16px;
+    box-shadow:5px 5px 0 var(--ink);
+    transition:transform .08s ease, box-shadow .08s ease;
+    user-select:none;
+    -webkit-user-select:none;
+  }
+  .btn:active{ transform:translate(3px,3px); box-shadow:2px 2px 0 var(--ink); }
+  .btn:disabled{ opacity:.45; pointer-events:none; }
+  .chip{
+    border:3px solid var(--ink);
+    border-radius:16px;
+    box-shadow:4px 4px 0 var(--ink);
+    transition:transform .12s ease;
+  }
+  .chip:active{ transform:scale(.96); }
+  .chip.matched-chip{ background:#dcfce7; }
+  .chip.tried-chip{ opacity:.55; }
+  .shake{ animation:shakeAnim .45s; }
+  @keyframes shakeAnim{
+    10%,90%{transform:translateX(-2px)}
+    20%,80%{transform:translateX(4px)}
+    30%,50%,70%{transform:translateX(-8px)}
+    40%,60%{transform:translateX(8px)}
+  }
+  .swipe-card{ touch-action:none; will-change:transform; }
+  .stamp{
+    position:absolute; top:18px; padding:6px 14px; border:5px solid; border-radius:12px;
+    font-family:'Bungee',sans-serif; font-size:1.6rem; text-transform:uppercase;
+    opacity:0; transform:rotate(-18deg) scale(.85);
+  }
+  .stamp-left{ left:18px; border-color:#ef4444; color:#ef4444; transform:rotate(-18deg) scale(.85);}
+  .stamp-right{ right:18px; border-color:#22c55e; color:#22c55e; transform:rotate(18deg) scale(.85);}
+  .fade-in{ animation:fadeIn .35s ease both; }
+  @keyframes fadeIn{ from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:translateY(0)} }
+  .pop-in{ animation:popIn .45s cubic-bezier(.2,1.4,.4,1) both; }
+  @keyframes popIn{ from{opacity:0; transform:scale(.4) rotate(-8deg)} to{opacity:1; transform:scale(1) rotate(0)} }
+  .overlay{
+    position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center;
+    background:rgba(10,4,20,.78); backdrop-filter:blur(2px);
+  }
+  .matchfx-wrap{ position:relative; width:260px; height:150px; margin:0 auto; }
+  .matchstick{
+    position:absolute; width:11px; height:74px; border-radius:6px 6px 4px 4px;
+    background:linear-gradient(#f1d4a3,#c99a5b);
+    box-shadow:0 2px 0 rgba(0,0,0,.25) inset, 1px 2px 3px rgba(0,0,0,.35);
+  }
+  .matchstick::after{
+    content:''; position:absolute; top:-15px; left:50%; transform:translateX(-50%);
+    width:22px; height:26px; border-radius:55% 55% 50% 50%;
+    background:radial-gradient(circle at 32% 30%, #ffb454, #e0263f 75%);
+    box-shadow:0 0 12px 3px rgba(255,120,40,.65);
+  }
+  .matchstick.burnt{ background:linear-gradient(#3a3a3a,#111); }
+  .matchstick.burnt::after{ background:radial-gradient(circle at 32% 30%,#555,#0a0a0a 75%); box-shadow:none; }
+  .flame-particle{ position:absolute; font-size:1.4rem; pointer-events:none; left:50%; top:50%; }
+  #toast{
+    position:fixed; left:50%; bottom:24px; transform:translateX(-50%) translateY(20px);
+    z-index:80; opacity:0; transition:all .25s ease; pointer-events:none; max-width:90vw;
+  }
+  #toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+  .timerbar-outer{ height:14px; border:3px solid var(--ink); border-radius:8px; background:#fff; overflow:hidden; }
+  .timerbar-inner{ height:100%; background:linear-gradient(90deg,#22c55e,#facc15,#ef4444); transition:width .3s linear; }
+  ::-webkit-scrollbar{ width:0; height:0; }
+  input[type=text], input[type=number], select{
+    font-family:'Fredoka',sans-serif; border:3px solid var(--ink); border-radius:12px; padding:10px 14px;
+  }
+  input:focus, select:focus{ outline:3px solid #facc15; }
+  .scrollable{ -webkit-overflow-scrolling:touch; }
+  .avatar-badge{ display:inline-flex; align-items:center; justify-content:center; }
+</style>
+</head>
+<body>
+
+<div id="app" class="min-h-dvh w-full flex flex-col items-center px-4 py-6"></div>
+<div id="toast" class="sticker-sm px-5 py-3 font-semibold text-center"></div>
+
+<script type="module">
+/* ------------------------------------------------------------------ */
+/* CONFIG                                                              */
+/* ------------------------------------------------------------------ */
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCIboBXBfnbUqOkTVIjd8K9o7MjLjh_el8",
+  authDomain: "match-57f24.firebaseapp.com",
+  projectId: "match-57f24",
+  storageBucket: "match-57f24.firebasestorage.app",
+  messagingSenderId: "297999589141",
+  appId: "1:297999589141:web:e4be14f3b4655fb805931c"
+};
+
+// Firebase is loaded lazily (dynamic import) and only when a Host/Join action
+// actually needs it — so the app boots and Demo Mode works instantly even if
+// the network is slow, offline, or the CDN is blocked (e.g. an ad-blocker).
+let db=null, auth=null, fbUid=null;
+let _doc,_getDoc,_setDoc,_updateDoc,_onSnapshot,_runTransaction,_serverTimestamp,_increment;
+let firebaseReadyPromise = null;
+
+function ensureFirebase(){
+  if(firebaseReadyPromise) return firebaseReadyPromise;
+  firebaseReadyPromise = (async () => {
+    const { initializeApp } = await import("https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js");
+    const fs = await import("https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js");
+    const authMod = await import("https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js");
+    _doc=fs.doc; _getDoc=fs.getDoc; _setDoc=fs.setDoc; _updateDoc=fs.updateDoc;
+    _onSnapshot=fs.onSnapshot; _runTransaction=fs.runTransaction;
+    _serverTimestamp=fs.serverTimestamp; _increment=fs.increment;
+    const fbApp = initializeApp(firebaseConfig);
+    db = fs.getFirestore(fbApp);
+    auth = authMod.getAuth(fbApp);
+    fbUid = await new Promise((resolve,reject)=>{
+      const unsub = authMod.onAuthStateChanged(auth, (user)=>{
+        if(user){ unsub(); resolve(user.uid); }
+      }, reject);
+      authMod.signInAnonymously(auth).catch(reject);
+    });
+    return { uid: fbUid };
+  })();
+  return firebaseReadyPromise;
+}
+
+const EMOJI_LIST = ['🦊','🐸','🐼','🐵','🦁','🐨','🐯','🐰','🦄','🐶','🐱','🐷','🐮','🐔','🐙','🦖','🐳','🦋','🐝','🦉','🐺','🦝','🦔','🐢','🐧','🦩','🦥','🐿️','🦦','🦫'];
+
+const DEFAULT_QUESTIONS = [
+  { id:'d1',  text:"Growing up, was your house more...",              optionA:{label:'Strict', emoji:'📏'}, optionB:{label:'Relaxed', emoji:'🌴'} },
+  { id:'d2',  text:"When you've got a problem, do you want...",       optionA:{label:'Advice', emoji:'💡'}, optionB:{label:'Just someone to listen', emoji:'👂'} },
+  { id:'d3',  text:"Do you show love more through...",                optionA:{label:'Words', emoji:'💬'}, optionB:{label:'Actions', emoji:'🎁'} },
+  { id:'d4',  text:"Your perfect day is full of...",                  optionA:{label:'Adventure', emoji:'🚀'}, optionB:{label:'Cozy', emoji:'🛋️'} },
+  { id:'d5',  text:"Would you rather have...",                        optionA:{label:'One amazing best friend', emoji:'🎯'}, optionB:{label:'A huge group of friends', emoji:'👯'} },
+  { id:'d6',  text:"Do you prefer making plans...",                   optionA:{label:'Ahead of time', emoji:'🗓️'}, optionB:{label:'Spontaneously', emoji:'🎲'} },
+  { id:'d7',  text:"Are you more of a...",                            optionA:{label:'Morning person', emoji:'🌅'}, optionB:{label:'Night owl', emoji:'🌙'} },
+  { id:'d8',  text:"Surprise free day — you'd rather...",             optionA:{label:'Stay in', emoji:'🏠'}, optionB:{label:'Go out', emoji:'🌍'} },
+  { id:'d9',  text:"When deciding, do you trust your...",             optionA:{label:'Head', emoji:'🧠'}, optionB:{label:'Heart', emoji:'❤️'} },
+  { id:'d10', text:"Would you rather be...",                          optionA:{label:'Famous for one small thing', emoji:'🏆'}, optionB:{label:'Totally unknown', emoji:'🕶️'} },
+  { id:'d11', text:"It's more important to be...",                    optionA:{label:'Funny', emoji:'😂'}, optionB:{label:'Wise', emoji:'🧘'} },
+  { id:'d12', text:"When you're stressed, you want...",               optionA:{label:'Space, alone', emoji:'🚪'}, optionB:{label:'Company', emoji:'🤝'} },
+  { id:'d13', text:"Do you believe more in...",                       optionA:{label:'Fate', emoji:'🔮'}, optionB:{label:'Hard work', emoji:'💪'} },
+  { id:'d14', text:"Would you rather have unlimited...",              optionA:{label:'Money', emoji:'💰'}, optionB:{label:'Time', emoji:'⏳'} },
+  { id:'d15', text:"You'd describe yourself as more...",              optionA:{label:'Creative', emoji:'🎨'}, optionB:{label:'Logical', emoji:'📊'} },
+  { id:'d16', text:"Do you prefer...",                                optionA:{label:'Texting', emoji:'📱'}, optionB:{label:'Calling', emoji:'☎️'} },
+  { id:'d17', text:"Given a time machine, you'd go to the...",        optionA:{label:'Past', emoji:'🕰️'}, optionB:{label:'Future', emoji:'🚀'} },
+  { id:'d18', text:"Honesty should be...",                            optionA:{label:'Direct, always', emoji:'🗣️'}, optionB:{label:'Gentle first', emoji:'🎁'} },
+  { id:'d19', text:"You recharge best...",                            optionA:{label:'Alone', emoji:'🧍'}, optionB:{label:'With people', emoji:'👥'} },
+  { id:'d20', text:"Worse to lose your sense of...",                  optionA:{label:'Smell', emoji:'👃'}, optionB:{label:'Hearing', emoji:'👂'} },
+  { id:'d21', text:"In relationships you value...",                   optionA:{label:'Loyalty', emoji:'🛡️'}, optionB:{label:'Freedom', emoji:'🕊️'} },
+  { id:'d22', text:"Would you rather always know...",                 optionA:{label:'The truth', emoji:'🔍'}, optionB:{label:'Be happy', emoji:'😊'} },
+];
+
+const BOT_NAMES = ['Bot Ava','Bot Milo','Bot Zoe','Bot Kai','Bot Nia','Bot Remy'];
+
+/* ------------------------------------------------------------------ */
+/* STATE                                                               */
+/* ------------------------------------------------------------------ */
+
+const state = {
+  mode: null,            // 'firebase' | 'demo'
+  uid: null,
+  roomCode: null,
+  room: null,            // latest room data
+  screen: 'landing',     // landing | join | hostSetup | lobby | question | hunting | matched-waiting | hostGame | podium
+  isHost: false,
+  questionBank: null,    // host-local, only for hostSetup screen
+  suspendRender: false,
+  pendingRoom: null,
+  ui: {
+    lastOverlayQIndex: null,   // qIndex we've already shown the match overlay for
+    triedThisQ: new Set(),     // uid's we've tried & failed this question (local only)
+  },
+  timerTick: null,
+  demo: null,             // demo store instance when in demo mode
+};
+
+function toast(msg, ms=2600){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(()=> t.classList.remove('show'), ms);
+}
+
+function shuffle(arr){
+  const a = arr.slice();
+  for(let i=a.length-1;i>0;i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [a[i],a[j]] = [a[j],a[i]];
+  }
+  return a;
+}
+
+function pairKey(a,b){ return [a,b].sort().join('__'); }
+
+function pickAvatar(playersMap){
+  const used = new Set(Object.values(playersMap||{}).map(p=>p.emoji));
+  const free = EMOJI_LIST.filter(e=>!used.has(e));
+  const pool = free.length ? free : EMOJI_LIST;
+  return pool[Math.floor(Math.random()*pool.length)];
+}
+
+function freshQuestionBank(){
+  return DEFAULT_QUESTIONS.map(q=>({...q, enabled:true, custom:false}));
+}
+
+/* ------------------------------------------------------------------ */
+/* FIRESTORE STORE                                                     */
+/* ------------------------------------------------------------------ */
+
+const roomRef = (code) => _doc(db, 'rooms', code);
+
+function randomCode(){
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I
+  let s = '';
+  for(let i=0;i<4;i++) s += chars[Math.floor(Math.random()*chars.length)];
+  return s;
+}
+
+const FirebaseStore = {
+  async createRoom(hostUid, hostName){
+    await ensureFirebase();
+    for(let attempt=0; attempt<8; attempt++){
+      const code = randomCode();
+      const snap = await _getDoc(roomRef(code));
+      if(snap.exists()) continue;
+      await _setDoc(roomRef(code), {
+        hostId: hostUid,
+        hostName,
+        status: 'lobby',
+        settings: { timerSeconds: 20, totalQuestions: 10 },
+        questions: [],
+        currentQuestionIndex: 0,
+        questionStartedAt: null,
+        players: {},
+        answers: {},
+        confirmedPairs: {},
+        createdAt: _serverTimestamp(),
+      });
+      return code;
+    }
+    throw new Error('Could not generate a room code, try again');
+  },
+
+  async joinRoom(code, uid, name){
+    await ensureFirebase();
+    const ref = roomRef(code);
+    const snap = await _getDoc(ref);
+    if(!snap.exists()) throw new Error('Room not found. Check the code.');
+    const data = snap.data();
+    const already = data.players && data.players[uid];
+    if(!already && data.status !== 'lobby'){
+      throw new Error('That game already started. Ask the host for a new room.');
+    }
+    if(already) return data;
+    const names = new Set(Object.values(data.players||{}).map(p=>p.name.toLowerCase()));
+    let finalName = name;
+    if(names.has(name.toLowerCase())) finalName = name + ' (2)';
+    const emoji = pickAvatar(data.players||{});
+    await _updateDoc(ref, {
+      [`players.${uid}`]: { name: finalName, emoji, matchCount: 0, joinedAt: Date.now() }
+    });
+    return data;
+  },
+
+  subscribe(code, cb){
+    return _onSnapshot(roomRef(code), (snap)=>{
+      if(!snap.exists()){ cb(null); return; }
+      cb({ id: snap.id, ...snap.data() });
+    }, (err)=>{ console.error(err); toast('Connection issue: ' + err.message); });
+  },
+
+  async startGame(code, questions, timerSeconds, resetScores, players){
+    await ensureFirebase();
+    const updates = {
+      status: 'question',
+      questions,
+      currentQuestionIndex: 0,
+      questionStartedAt: _serverTimestamp(),
+      answers: {},
+      confirmedPairs: {},
+      settings: { timerSeconds, totalQuestions: questions.length },
+    };
+    if(resetScores && players){
+      for(const uid in players) updates[`players.${uid}.matchCount`] = 0;
+    }
+    await _updateDoc(roomRef(code), updates);
+  },
+
+  async submitAnswer(code, qIndex, uid, choice){
+    await ensureFirebase();
+    await _updateDoc(roomRef(code), { [`answers.${qIndex}.${uid}`]: choice });
+  },
+
+  async attemptMatch(code, qIndex, myUid, otherUid){
+    await ensureFirebase();
+    const ref = roomRef(code);
+    return _runTransaction(db, async (tx)=>{
+      const snap = await tx.get(ref);
+      const data = snap.data();
+      const key = pairKey(myUid, otherUid);
+      const pairs = (data.confirmedPairs && data.confirmedPairs[qIndex]) || {};
+      if(pairs[key]) return { matched:true, option: pairs[key].option };
+      const alreadyMatched = Object.values(pairs).some(p=>p.players.includes(myUid) || p.players.includes(otherUid));
+      if(alreadyMatched) return { matched:false, reason:'already-matched' };
+      const answersForQ = (data.answers && data.answers[qIndex]) || {};
+      const mine = answersForQ[myUid];
+      const theirs = answersForQ[otherUid];
+      if(!theirs) return { matched:false, reason:'not-answered' };
+      if(mine !== theirs) return { matched:false, reason:'no-match' };
+      tx.update(ref, {
+        [`confirmedPairs.${qIndex}.${key}`]: { players:[myUid,otherUid], option: mine, ts: Date.now() },
+        [`players.${myUid}.matchCount`]: _increment(1),
+        [`players.${otherUid}.matchCount`]: _increment(1),
+      });
+      return { matched:true, option: mine };
+    });
+  },
+
+  async nextQuestion(code, room){
+    await ensureFirebase();
+    const nextIdx = room.currentQuestionIndex + 1;
+    if(nextIdx >= room.questions.length){
+      await this.endGame(code);
+      return;
+    }
+    await _updateDoc(roomRef(code), { currentQuestionIndex: nextIdx, questionStartedAt: _serverTimestamp() });
+  },
+
+  async endGame(code){
+    await ensureFirebase();
+    await _updateDoc(roomRef(code), { status: 'ended' });
+  },
+
+  async rematch(code, players){
+    await ensureFirebase();
+    const updates = {
+      status: 'lobby', currentQuestionIndex: 0, questionStartedAt: null,
+      answers: {}, confirmedPairs: {}, questions: [],
+    };
+    for(const uid in players) updates[`players.${uid}.matchCount`] = 0;
+    await _updateDoc(roomRef(code), updates);
+  },
+};
+
+/* ------------------------------------------------------------------ */
+/* LOCAL DEMO STORE (single-device, bots, no network)                  */
+/* ------------------------------------------------------------------ */
+
+function makeDemoStore(){
+  let room = null;
+  const listeners = [];
+  const notify = () => listeners.forEach(fn=>fn(room ? {...room} : null));
+
+  function botsAnswer(){
+    const qIndex = room.currentQuestionIndex;
+    Object.keys(room.players).forEach(uid=>{
+      if(!uid.startsWith('bot_')) return;
+      setTimeout(()=>{
+        if(!room || room.currentQuestionIndex !== qIndex) return;
+        const choice = Math.random() < 0.5 ? 'A' : 'B';
+        room.answers[qIndex] = room.answers[qIndex] || {};
+        room.answers[qIndex][uid] = choice;
+        notify();
+        botTryMatch(uid, qIndex);
+      }, 500 + Math.random()*1800);
+    });
+  }
+
+  function botTryMatch(botUid, qIndex){
+    setTimeout(()=>{
+      if(!room || room.currentQuestionIndex !== qIndex) return;
+      const others = Object.keys(room.players).filter(u=>u!==botUid);
+      const target = others[Math.floor(Math.random()*others.length)];
+      if(!target) return;
+      store.attemptMatch(null, qIndex, botUid, target);
+    }, 600 + Math.random()*1500);
+  }
+
+  const store = {
+    async createRoom(hostUid, hostName){
+      const code = 'DEMO';
+      room = {
+        id: code, hostId: hostUid, hostName, status:'lobby',
+        settings:{ timerSeconds:15, totalQuestions:8 },
+        questions:[], currentQuestionIndex:0, questionStartedAt:null,
+        players:{}, answers:{}, confirmedPairs:{}, createdAt:Date.now(),
+      };
+      const botCount = 3;
+      shuffle(BOT_NAMES).slice(0,botCount).forEach((name,i)=>{
+        const uid = 'bot_'+i;
+        room.players[uid] = { name, emoji: pickAvatar(room.players), matchCount:0, joinedAt:Date.now() };
+      });
+      return code;
+    },
+    async joinRoom(code, uid, name){
+      room.players[uid] = { name, emoji: pickAvatar(room.players), matchCount:0, joinedAt:Date.now() };
+      notify();
+      return room;
+    },
+    subscribe(code, cb){ listeners.push(cb); cb({...room}); return ()=>{}; },
+    async startGame(code, questions, timerSeconds, resetScores, players){
+      room.questions = questions;
+      room.status = 'question';
+      room.currentQuestionIndex = 0;
+      room.questionStartedAt = { toMillis: ()=>Date.now() };
+      room.answers = {}; room.confirmedPairs = {};
+      room.settings = { timerSeconds, totalQuestions: questions.length };
+      if(resetScores) Object.values(room.players).forEach(p=>p.matchCount=0);
+      notify();
+      botsAnswer();
+    },
+    async submitAnswer(code, qIndex, uid, choice){
+      room.answers[qIndex] = room.answers[qIndex] || {};
+      room.answers[qIndex][uid] = choice;
+      notify();
+    },
+    async attemptMatch(code, qIndex, myUid, otherUid){
+      const key = pairKey(myUid, otherUid);
+      const pairs = (room.confirmedPairs[qIndex] = room.confirmedPairs[qIndex] || {});
+      if(pairs[key]){ notify(); return { matched:true, option: pairs[key].option }; }
+      const alreadyMatched = Object.values(pairs).some(p=>p.players.includes(myUid) || p.players.includes(otherUid));
+      const answersForQ = room.answers[qIndex] || {};
+      const mine = answersForQ[myUid];
+      const theirs = answersForQ[otherUid];
+      let result;
+      if(alreadyMatched) result = { matched:false, reason:'already-matched' };
+      else if(!theirs) result = { matched:false, reason:'not-answered' };
+      else if(mine !== theirs) result = { matched:false, reason:'no-match' };
+      else {
+        pairs[key] = { players:[myUid,otherUid], option: mine, ts: Date.now() };
+        room.players[myUid].matchCount++;
+        room.players[otherUid].matchCount++;
+        result = { matched:true, option: mine };
+      }
+      notify();
+      return result;
+    },
+    async nextQuestion(code, roomArg){
+      const nextIdx = roomArg.currentQuestionIndex + 1;
+      if(nextIdx >= roomArg.questions.length){ await store.endGame(); return; }
+      room.currentQuestionIndex = nextIdx;
+      room.questionStartedAt = { toMillis: ()=>Date.now() };
+      notify();
+      botsAnswer();
+    },
+    async endGame(){ room.status = 'ended'; notify(); },
+    async rematch(code, players){
+      room.status='lobby'; room.currentQuestionIndex=0; room.questionStartedAt=null;
+      room.answers={}; room.confirmedPairs={}; room.questions=[];
+      Object.values(room.players).forEach(p=>p.matchCount=0);
+      notify();
+    },
+  };
+  return store;
+}
+
+function activeStore(){ return state.mode === 'demo' ? state.demo : FirebaseStore; }
+
+/* ------------------------------------------------------------------ */
+/* MATCH FX — matchsticks meet & catch fire, a couple of variations    */
+/* ------------------------------------------------------------------ */
+
+function spawnFlames(container, opts={}){
+  const count = opts.count || 12;
+  const glyphs = opts.glyphs || ['🔥','🔥','✨'];
+  for(let i=0;i<count;i++){
+    const span = document.createElement('span');
+    span.className = 'flame-particle';
+    span.textContent = glyphs[Math.floor(Math.random()*glyphs.length)];
+    container.appendChild(span);
+    const angle = (Math.PI*2*i/count) + (Math.random()*0.6-0.3);
+    const dist = 60 + Math.random()*70;
+    const dx = Math.cos(angle)*dist;
+    const dy = Math.sin(angle)*dist - 40;
+    span.animate([
+      { transform:'translate(-50%,-50%) scale(.5)', opacity:1 },
+      { transform:`translate(${dx-50}%,${dy}px) scale(1.3)`, opacity:.9, offset:.6 },
+      { transform:`translate(${dx*1.4-50}%,${dy-40}px) scale(.4)`, opacity:0 },
+    ], { duration: 900+Math.random()*400, easing:'ease-out' }).onfinish = ()=> span.remove();
+  }
+}
+
+function fireConfetti(originY=0.5){
+  if(typeof confetti !== 'function') return; // CDN blocked/offline — flame emoji + WAAPI fx still play
+  try{
+    const fireShape = confetti.shapeFromText ? confetti.shapeFromText({ text:'🔥', scalar: 2.2 }) : undefined;
+    confetti({
+      particleCount: 60, spread: 80, startVelocity: 38, gravity: 0.9,
+      origin: { y: originY }, scalar: 1.1,
+      shapes: fireShape ? [fireShape,'circle'] : undefined,
+      colors: ['#ff2d78','#ff8a3d','#facc15','#9333ea'],
+    });
+  }catch(e){
+    try{ confetti({ particleCount:70, spread:80, origin:{y:originY}, colors:['#ff2d78','#ff8a3d','#facc15'] }); }
+    catch(e2){ /* ignore */ }
+  }
+}
+
+function playMatchFX(container, variant){
+  container.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'matchfx-wrap';
+  container.appendChild(wrap);
+
+  const left = document.createElement('div');
+  const right = document.createElement('div');
+  left.className = 'matchstick';
+  right.className = 'matchstick';
+  wrap.appendChild(left);
+  wrap.appendChild(right);
+
+  const finish = () => {
+    left.classList.add('burnt');
+    right.classList.add('burnt');
+    spawnFlames(wrap, {});
+    fireConfetti(0.4);
+    if(navigator.vibrate) navigator.vibrate([30,40,90]);
+  };
+
+  if(variant === 'campfire'){
+    left.style.left = '50%'; left.style.top = '-70px'; left.style.marginLeft = '-30px';
+    right.style.left = '50%'; right.style.top = '-70px'; right.style.marginLeft = '10px';
+    const a1 = left.animate([
+      { transform:'translateY(0) rotate(-10deg)' },
+      { transform:'translateY(160px) rotate(-50deg)' },
+    ], { duration:520, easing:'cubic-bezier(.5,0,.9,.5)', fill:'forwards' });
+    right.animate([
+      { transform:'translateY(0) rotate(10deg)' },
+      { transform:'translateY(160px) rotate(50deg)' },
+    ], { duration:520, easing:'cubic-bezier(.5,0,.9,.5)', fill:'forwards' });
+    a1.onfinish = finish;
+  } else if(variant === 'sparks'){
+    left.style.left = '50%'; left.style.top='50%'; left.style.marginLeft='-40px'; left.style.marginTop='-37px';
+    right.style.left = '50%'; right.style.top='50%'; right.style.marginLeft='-40px'; right.style.marginTop='-37px';
+    left.style.transform = 'rotate(-45deg)';
+    right.style.transform = 'rotate(45deg)';
+    const a1 = left.animate([
+      { transform:'rotate(-45deg) translateX(0)' },
+      { transform:'rotate(-25deg) translateX(18px)' },
+      { transform:'rotate(-45deg) translateX(0)' },
+    ], { duration:420, easing:'ease-in-out' });
+    right.animate([
+      { transform:'rotate(45deg) translateX(0)' },
+      { transform:'rotate(25deg) translateX(-18px)' },
+      { transform:'rotate(45deg) translateX(0)' },
+    ], { duration:420, easing:'ease-in-out' });
+    a1.onfinish = finish;
+  } else { // 'strike' default
+    left.style.left = '18px'; left.style.bottom = '6px';
+    right.style.right = '18px'; right.style.bottom = '6px';
+    left.style.transform = 'rotate(-65deg)';
+    right.style.transform = 'rotate(65deg)';
+    const a1 = left.animate([
+      { transform:'rotate(-65deg) translate(0,0)' },
+      { transform:'rotate(-22deg) translate(78px,-78px)' },
+    ], { duration:480, easing:'cubic-bezier(.3,.6,.35,1)', fill:'forwards' });
+    right.animate([
+      { transform:'rotate(65deg) translate(0,0)' },
+      { transform:'rotate(22deg) translate(-78px,-78px)' },
+    ], { duration:480, easing:'cubic-bezier(.3,.6,.35,1)', fill:'forwards' });
+    a1.onfinish = finish;
+  }
+}
+
+const MATCH_VARIANTS = ['strike','campfire','sparks'];
+function randomVariant(){ return MATCH_VARIANTS[Math.floor(Math.random()*MATCH_VARIANTS.length)]; }
+
+/* ------------------------------------------------------------------ */
+/* RENDER HELPERS                                                      */
+/* ------------------------------------------------------------------ */
+
+const app = document.getElementById('app');
+
+function html(strings, ...vals){ return strings.reduce((out,s,i)=> out + s + (vals[i]!==undefined?vals[i]:''), ''); }
+function esc(str){ const d=document.createElement('div'); d.textContent=str==null?'':String(str); return d.innerHTML; }
+
+function Logo(sizeClass='text-3xl'){
+  return `<div class="font-stamp ${sizeClass} text-white drop-shadow-[3px_3px_0_rgba(0,0,0,0.9)]">MATCH <span class="inline-block">🔥</span></div>`;
+}
+
+function timerRemaining(room){
+  if(!room.settings || !room.settings.timerSeconds) return null;
+  if(!room.questionStartedAt || !room.questionStartedAt.toMillis) return room.settings.timerSeconds;
+  const elapsed = (Date.now() - room.questionStartedAt.toMillis())/1000;
+  return Math.max(0, room.settings.timerSeconds - elapsed);
+}
+
+/* ------------------------------------------------------------------ */
+/* SCREENS                                                             */
+/* ------------------------------------------------------------------ */
+
+function screenLanding(){
+  const params = new URLSearchParams(location.search);
+  const prefill = params.get('room') || '';
+  if(prefill) state.screen = 'join';
+  app.innerHTML = `
+    <div class="w-full max-w-sm flex flex-col items-center gap-8 mt-10">
+      ${Logo('text-5xl')}
+      <p class="text-white text-center font-semibold text-lg drop-shadow">The either/or party game.<br>Find your people. Watch it catch fire. 🔥</p>
+      <div class="sticker w-full p-6 flex flex-col gap-4">
+        <button data-action="go-host" class="btn bg-yellow-300 py-4 text-xl">🎉 Host a Game</button>
+        <button data-action="go-join" class="btn bg-pink-300 py-4 text-xl">📱 Join a Game</button>
+        <button data-action="go-demo" class="btn bg-purple-200 py-3 text-base">🤖 Try Demo Mode (solo)</button>
+      </div>
+    </div>
+  `;
+}
+
+function screenJoin(){
+  const params = new URLSearchParams(location.search);
+  const prefill = params.get('room') || '';
+  app.innerHTML = `
+    <div class="w-full max-w-sm flex flex-col items-center gap-6 mt-10">
+      ${Logo('text-4xl')}
+      <div class="sticker w-full p-6 flex flex-col gap-4">
+        <h2 class="font-stamp text-xl text-center">JOIN ROOM</h2>
+        <input id="joinName" type="text" maxlength="16" placeholder="Your name" class="w-full text-lg" autocomplete="off">
+        <input id="joinCode" type="text" maxlength="4" placeholder="ROOM CODE" value="${esc(prefill)}" class="w-full text-lg text-center uppercase tracking-widest font-bold" autocomplete="off">
+        <button data-action="submit-join" class="btn bg-green-300 py-4 text-xl">Let's Go 🚀</button>
+        <button data-action="back-home" class="text-sm underline text-gray-500 mt-1">← back</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('joinCode').addEventListener('input', (e)=>{ e.target.value = e.target.value.toUpperCase(); });
+}
+
+function screenHostName(){
+  app.innerHTML = `
+    <div class="w-full max-w-sm flex flex-col items-center gap-6 mt-10">
+      ${Logo('text-4xl')}
+      <div class="sticker w-full p-6 flex flex-col gap-4">
+        <h2 class="font-stamp text-xl text-center">HOST A GAME</h2>
+        <input id="hostName" type="text" maxlength="16" placeholder="Your name (host)" class="w-full text-lg" autocomplete="off">
+        <button data-action="create-room" class="btn bg-yellow-300 py-4 text-xl">Create Room 🎊</button>
+        <button data-action="back-home" class="text-sm underline text-gray-500 mt-1">← back</button>
+      </div>
+    </div>
+  `;
+}
+
+function questionBankRow(q){
+  const removeBtn = q.custom ? `<button data-action="remove-custom-question" data-id="${q.id}" class="text-red-500 text-lg px-2">🗑️</button>` : '';
+  return `
+  <li class="flex items-center gap-2 py-2 border-b-2 border-black/10" data-qid="${q.id}">
+    <input type="checkbox" data-action="toggle-question" data-id="${q.id}" ${q.enabled?'checked':''} class="w-5 h-5 accent-pink-500 shrink-0">
+    <div class="flex-1 text-sm leading-tight">
+      <div class="font-semibold">${esc(q.text)}</div>
+      <div class="text-gray-500">${q.optionA.emoji} ${esc(q.optionA.label)} &nbsp;vs&nbsp; ${q.optionB.emoji} ${esc(q.optionB.label)}</div>
+    </div>
+    ${removeBtn}
+  </li>`;
+}
+
+function renderQuestionListUI(){
+  const ul = document.getElementById('questionListUl');
+  if(!ul) return;
+  ul.innerHTML = state.questionBank.map(questionBankRow).join('');
+  updateSelectedCount();
+}
+
+function updateSelectedCount(){
+  const el = document.getElementById('selectedCount');
+  if(!el) return;
+  const n = state.questionBank.filter(q=>q.enabled).length;
+  el.textContent = n;
+  const totalInput = document.getElementById('totalQuestionsInput');
+  if(totalInput) totalInput.max = n || 1;
+}
+
+function screenHostSetup(){
+  const room = state.room;
+  const joinUrl = `${location.origin}${location.pathname}?room=${state.roomCode}`;
+  const playerCount = Object.keys(room.players||{}).length;
+
+  app.innerHTML = `
+    <div class="w-full max-w-md flex flex-col items-center gap-4">
+      ${Logo('text-3xl')}
+      <div class="sticker w-full p-4 flex flex-col items-center gap-2">
+        <div class="text-sm font-semibold text-gray-500">ROOM CODE</div>
+        <div class="font-stamp text-4xl tracking-widest">${state.roomCode}</div>
+        <div id="qrcode" class="my-1"></div>
+        <div class="text-xs text-gray-500 text-center break-all">${esc(joinUrl)}</div>
+      </div>
+
+      <div class="sticker w-full p-4">
+        <div class="font-stamp text-base mb-2">PLAYERS (<span id="playerCountNum">${playerCount}</span>)</div>
+        <div id="lobbyPlayersList" class="flex flex-wrap gap-2"></div>
+      </div>
+
+      <div class="sticker w-full p-4 flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <div class="font-stamp text-base">QUESTIONS (<span id="selectedCount">0</span> selected)</div>
+        </div>
+        <ul id="questionListUl" class="max-h-56 overflow-y-auto scrollable"></ul>
+
+        <div class="flex flex-col gap-2 bg-yellow-50 rounded-xl p-3 border-2 border-black/10">
+          <div class="font-semibold text-sm">➕ Add your own</div>
+          <input id="customText" type="text" placeholder="Question text" class="text-sm">
+          <div class="flex gap-2">
+            <input id="customEmojiA" type="text" maxlength="4" placeholder="🅰️" class="w-14 text-sm text-center">
+            <input id="customLabelA" type="text" placeholder="Option A" class="flex-1 text-sm">
+          </div>
+          <div class="flex gap-2">
+            <input id="customEmojiB" type="text" maxlength="4" placeholder="🅱️" class="w-14 text-sm text-center">
+            <input id="customLabelB" type="text" placeholder="Option B" class="flex-1 text-sm">
+          </div>
+          <button data-action="add-custom-question" class="btn bg-blue-200 py-2 text-sm">Add Question</button>
+        </div>
+      </div>
+
+      <div class="sticker w-full p-4 flex flex-col gap-3">
+        <div class="flex items-center justify-between gap-2">
+          <label class="font-semibold text-sm">⏱ Timer per question</label>
+          <select id="timerSelect" class="text-sm">
+            <option value="0">No timer (manual)</option>
+            <option value="10">10s</option>
+            <option value="15" selected>15s</option>
+            <option value="20">20s</option>
+            <option value="30">30s</option>
+            <option value="45">45s</option>
+          </select>
+        </div>
+        <div class="flex items-center justify-between gap-2">
+          <label class="font-semibold text-sm"># Questions this game</label>
+          <input id="totalQuestionsInput" type="number" min="1" max="22" value="10" class="w-20 text-center text-sm">
+        </div>
+        <button data-action="start-game" class="btn bg-green-300 py-4 text-xl mt-2">START GAME ▶️</button>
+      </div>
+    </div>
+  `;
+
+  renderQuestionListUI();
+  updateLobbyPlayersListUI();
+
+  try{
+    document.getElementById('qrcode').innerHTML = '';
+    new QRCode(document.getElementById('qrcode'), { text: joinUrl, width:150, height:150 });
+  }catch(e){ /* qr lib unavailable, ignore */ }
+}
+
+function updateLobbyPlayersListUI(){
+  const el = document.getElementById('lobbyPlayersList');
+  const countEl = document.getElementById('playerCountNum');
+  if(!el || !state.room) return;
+  const players = state.room.players || {};
+  const entries = Object.entries(players);
+  if(countEl) countEl.textContent = entries.length;
+  el.innerHTML = entries.length ? entries.map(([uid,p])=>`
+    <div class="chip bg-white px-3 py-2 flex items-center gap-1 text-sm font-semibold">
+      <span class="text-lg">${p.emoji}</span> ${esc(p.name)}
+    </div>
+  `).join('') : `<div class="text-gray-400 text-sm">Waiting for players to join…</div>`;
+}
+
+function screenLobby(){
+  const room = state.room;
+  const players = Object.entries(room.players||{});
+  app.innerHTML = `
+    <div class="w-full max-w-sm flex flex-col items-center gap-6 mt-6">
+      ${Logo('text-4xl')}
+      <div class="sticker w-full p-6 flex flex-col items-center gap-3">
+        <div class="text-sm font-semibold text-gray-500">ROOM CODE</div>
+        <div class="font-stamp text-4xl tracking-widest">${state.roomCode}</div>
+        <div class="animate-pulse text-lg font-semibold mt-2">Waiting for ${esc(room.hostName)} to start… ⏳</div>
+      </div>
+      <div class="sticker w-full p-4">
+        <div class="font-stamp text-base mb-2">PLAYERS (${players.length})</div>
+        <div class="flex flex-wrap gap-2">
+          ${players.map(([uid,p])=>`<div class="chip bg-white px-3 py-2 flex items-center gap-1 text-sm font-semibold ${uid===state.uid?'ring-4 ring-yellow-300':''}">
+            <span class="text-lg">${p.emoji}</span> ${esc(p.name)}
+          </div>`).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function myAnswer(room, qIndex){
+  return room.answers && room.answers[qIndex] ? room.answers[qIndex][state.uid] : undefined;
+}
+function myMatchInfo(room, qIndex){
+  const pairs = (room.confirmedPairs && room.confirmedPairs[qIndex]) || {};
+  for(const key in pairs){
+    const p = pairs[key];
+    if(p.players.includes(state.uid)) return p;
+  }
+  return null;
+}
+
+let dragCtx = null;
+
+function screenAnswering(){
+  const room = state.room;
+  const q = room.questions[room.currentQuestionIndex];
+  const remaining = timerRemaining(room);
+
+  app.innerHTML = `
+    <div class="w-full max-w-sm flex flex-col items-center gap-4 mt-2">
+      <div class="w-full flex items-center justify-between px-1">
+        <span class="text-white font-bold drop-shadow">Q${room.currentQuestionIndex+1}/${room.questions.length}</span>
+        ${Logo('text-xl')}
+      </div>
+      ${remaining!==null ? `
+        <div class="w-full timerbar-outer"><div id="timerInnerBar" class="timerbar-inner" style="width:${(remaining/room.settings.timerSeconds*100)}%"></div></div>
+      ` : ''}
+
+      <div class="relative w-full" style="height:400px;">
+        <div id="swipeCard" class="swipe-card sticker absolute inset-0 p-6 flex flex-col cursor-grab select-none">
+          <div class="stamp stamp-left" id="stampLeft">${q.optionA.emoji} ${esc(q.optionA.label)}</div>
+          <div class="stamp stamp-right" id="stampRight">${q.optionB.emoji} ${esc(q.optionB.label)}</div>
+          <div class="flex-1 flex items-center justify-center text-center px-2">
+            <div class="font-stamp text-2xl leading-snug">${esc(q.text)}</div>
+          </div>
+          <div class="flex justify-between text-center gap-3 pb-1">
+            <div class="flex-1">
+              <div class="text-4xl">${q.optionA.emoji}</div>
+              <div class="font-bold text-sm mt-1">${esc(q.optionA.label)}</div>
+              <div class="text-xs text-gray-400">⟵ swipe</div>
+            </div>
+            <div class="flex-1">
+              <div class="text-4xl">${q.optionB.emoji}</div>
+              <div class="font-bold text-sm mt-1">${esc(q.optionB.label)}</div>
+              <div class="text-xs text-gray-400">swipe ⟶</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex w-full gap-3">
+        <button data-action="answer-a" class="btn bg-red-200 flex-1 py-4 text-lg">${q.optionA.emoji} ${esc(q.optionA.label)}</button>
+        <button data-action="answer-b" class="btn bg-green-200 flex-1 py-4 text-lg">${q.optionB.emoji} ${esc(q.optionB.label)}</button>
+      </div>
+    </div>
+  `;
+
+  attachSwipeHandlers(q);
+}
+
+function attachSwipeHandlers(q){
+  const card = document.getElementById('swipeCard');
+  if(!card) return;
+  const stampLeft = document.getElementById('stampLeft');
+  const stampRight = document.getElementById('stampRight');
+  let startX=0, startY=0, dx=0, dragging=false;
+
+  function onDown(e){
+    dragging = true;
+    state.suspendRender = true;
+    const p = e.touches ? e.touches[0] : e;
+    startX = p.clientX; startY = p.clientY;
+    card.style.transition = 'none';
+    card.setPointerCapture && e.pointerId!==undefined && card.setPointerCapture(e.pointerId);
+  }
+  function onMove(e){
+    if(!dragging) return;
+    const p = e.touches ? e.touches[0] : e;
+    dx = p.clientX - startX;
+    const dy = p.clientY - startY;
+    const rot = dx/18;
+    card.style.transform = `translate(${dx}px, ${dy*0.15}px) rotate(${rot}deg)`;
+    const ratio = Math.min(Math.abs(dx)/120, 1);
+    if(dx < 0){ stampLeft.style.opacity = ratio; stampRight.style.opacity = 0; }
+    else { stampRight.style.opacity = ratio; stampLeft.style.opacity = 0; }
+  }
+  function onUp(){
+    if(!dragging) return;
+    dragging = false;
+    card.style.transition = 'transform .3s ease';
+    if(Math.abs(dx) > 100){
+      const dir = dx > 0 ? 'B' : 'A';
+      const flyX = dx > 0 ? window.innerWidth : -window.innerWidth;
+      card.style.transform = `translate(${flyX}px, ${dx*0.1}px) rotate(${dx/10}deg)`;
+      setTimeout(()=> chooseAnswer(dir), 220);
+    } else {
+      card.style.transform = 'translate(0,0) rotate(0)';
+      stampLeft.style.opacity = 0; stampRight.style.opacity = 0;
+      state.suspendRender = false;
+      flushPendingRoom();
+    }
+    dx = 0;
+  }
+
+  card.addEventListener('pointerdown', onDown);
+  card.addEventListener('pointermove', onMove);
+  card.addEventListener('pointerup', onUp);
+  card.addEventListener('pointercancel', onUp);
+}
+
+async function chooseAnswer(choice){
+  state.suspendRender = false;
+  const room = state.room;
+  const qIndex = room.currentQuestionIndex;
+  try{
+    await activeStore().submitAnswer(state.roomCode, qIndex, state.uid, choice);
+  }catch(e){ toast('Could not submit answer: ' + e.message); }
+  flushPendingRoom();
+}
+
+function screenHunting(){
+  const room = state.room;
+  const qIndex = room.currentQuestionIndex;
+  const others = Object.entries(room.players||{}).filter(([uid])=>uid!==state.uid);
+  const pairs = (room.confirmedPairs && room.confirmedPairs[qIndex]) || {};
+  const answeredSet = new Set(Object.keys((room.answers && room.answers[qIndex]) || {}));
+  const remaining = timerRemaining(room);
+
+  app.innerHTML = `
+    <div class="w-full max-w-sm flex flex-col items-center gap-4 mt-2">
+      <div class="w-full flex items-center justify-between px-1">
+        <span class="text-white font-bold drop-shadow">Q${qIndex+1}/${room.questions.length}</span>
+        ${Logo('text-xl')}
+      </div>
+      ${remaining!==null ? `
+        <div class="w-full timerbar-outer"><div id="timerInnerBar" class="timerbar-inner" style="width:${(remaining/room.settings.timerSeconds*100)}%"></div></div>
+      ` : ''}
+      <div class="sticker w-full p-4 text-center">
+        <div class="font-stamp text-lg mb-1">GO FIND YOUR MATCH 👀</div>
+        <div class="text-sm text-gray-500">Ask around, then tap who you think picked the same as you.</div>
+      </div>
+      <div class="grid grid-cols-2 gap-3 w-full">
+        ${others.map(([uid,p])=>{
+          const answered = answeredSet.has(uid);
+          const tried = state.ui.triedThisQ.has(uid);
+          const already = pairs[pairKey(state.uid,uid)];
+          const cls = already ? 'matched-chip' : (tried ? 'tried-chip' : '');
+          return `<button data-action="attempt-match" data-uid="${uid}" class="chip ${cls} bg-white px-3 py-4 flex flex-col items-center gap-1" ${already?'disabled':''} id="chip-${uid}">
+            <span class="text-3xl">${p.emoji}</span>
+            <span class="font-semibold text-sm">${esc(p.name)}</span>
+            <span class="text-xs text-gray-400">${already? '✅ matched' : (answered ? 'ready' : 'still answering…')}</span>
+          </button>`;
+        }).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function screenMatchedWaiting(matchInfo){
+  const room = state.room;
+  const otherUid = matchInfo.players.find(u=>u!==state.uid);
+  const other = room.players[otherUid];
+  const q = room.questions[room.currentQuestionIndex];
+  const optLabel = matchInfo.option === 'A' ? q.optionA : q.optionB;
+  app.innerHTML = `
+    <div class="w-full max-w-sm flex flex-col items-center gap-6 mt-16 text-center">
+      ${Logo('text-3xl')}
+      <div class="sticker w-full p-6 flex flex-col items-center gap-3">
+        <div class="text-5xl">${other ? other.emoji : '🎉'}</div>
+        <div class="font-stamp text-xl">You matched with ${esc(other ? other.name : 'someone')}!</div>
+        <div class="text-sm text-gray-500">Both picked ${optLabel.emoji} ${esc(optLabel.label)}</div>
+        <div class="animate-pulse font-semibold mt-2">Waiting for the next question… ⏳</div>
+        <div class="mt-2 font-stamp text-lg">🔥 Matches so far: ${room.players[state.uid].matchCount}</div>
+      </div>
+    </div>
+  `;
+}
+
+function screenHostGame(){
+  const room = state.room;
+  const qIndex = room.currentQuestionIndex;
+  const q = room.questions[qIndex];
+  const players = Object.entries(room.players||{});
+  const answeredCount = Object.keys((room.answers && room.answers[qIndex]) || {}).length;
+  const matchedUids = new Set();
+  Object.values((room.confirmedPairs && room.confirmedPairs[qIndex]) || {}).forEach(p=>p.players.forEach(u=>matchedUids.add(u)));
+  const remaining = timerRemaining(room);
+
+  app.innerHTML = `
+    <div class="w-full max-w-md flex flex-col items-center gap-4 mt-2">
+      <div class="w-full flex items-center justify-between px-1">
+        <span class="text-white font-bold drop-shadow">HOST · Q${qIndex+1}/${room.questions.length}</span>
+        ${Logo('text-xl')}
+      </div>
+      ${remaining!==null ? `
+        <div class="w-full timerbar-outer"><div id="timerInnerBar" class="timerbar-inner" style="width:${(remaining/room.settings.timerSeconds*100)}%"></div></div>
+        <div class="text-white font-bold" id="timerText">${Math.ceil(remaining)}s left</div>
+      ` : `<div class="text-white font-bold">No timer — advance manually</div>`}
+
+      <div class="sticker w-full p-5 text-center">
+        <div class="font-stamp text-xl mb-2">${esc(q.text)}</div>
+        <div class="flex justify-around text-2xl font-bold">
+          <div>${q.optionA.emoji} ${esc(q.optionA.label)}</div>
+          <div>${q.optionB.emoji} ${esc(q.optionB.label)}</div>
+        </div>
+      </div>
+
+      <div class="sticker w-full p-4">
+        <div class="font-stamp text-sm mb-2">${answeredCount}/${players.length} answered · ${matchedUids.size} matched</div>
+        <div class="flex flex-wrap gap-2 max-h-32 overflow-y-auto scrollable">
+          ${players.map(([uid,p])=>{
+            const answered = room.answers && room.answers[qIndex] && room.answers[qIndex][uid];
+            const matched = matchedUids.has(uid);
+            return `<div class="chip bg-white px-2 py-1 flex items-center gap-1 text-xs font-semibold ${matched?'matched-chip':''}">
+              ${p.emoji} ${esc(p.name)} ${matched?'🔥':(answered?'✅':'⏳')}
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+
+      <div class="flex w-full gap-3">
+        <button data-action="next-question" class="btn bg-yellow-300 flex-1 py-4 text-lg">Next ⏭️</button>
+        <button data-action="end-game" class="btn bg-red-300 flex-1 py-4 text-lg">End Game 🛑</button>
+      </div>
+    </div>
+  `;
+}
+
+function screenPodium(){
+  const room = state.room;
+  const ranked = Object.entries(room.players||{}).sort((a,b)=>b[1].matchCount-a[1].matchCount);
+  const medals = ['🥇','🥈','🥉'];
+  app.innerHTML = `
+    <div class="w-full max-w-sm flex flex-col items-center gap-5 mt-4">
+      ${Logo('text-4xl')}
+      <div class="font-stamp text-2xl text-white drop-shadow">GAME OVER!</div>
+      <div class="sticker w-full p-5 flex flex-col gap-2">
+        ${ranked.map(([uid,p],i)=>`
+          <div class="flex items-center gap-3 py-2 ${i===0?'bg-yellow-100 rounded-xl px-2':''}">
+            <div class="text-2xl w-8 text-center">${medals[i] || (i+1)}</div>
+            <div class="text-3xl">${p.emoji}</div>
+            <div class="flex-1 font-bold">${esc(p.name)} ${i===0?'👑':''}</div>
+            <div class="font-stamp">${p.matchCount} 🔥</div>
+          </div>
+        `).join('')}
+      </div>
+      ${state.isHost ? `
+        <div class="flex w-full gap-3">
+          <button data-action="rematch" class="btn bg-green-300 flex-1 py-4 text-lg">Rematch 🔁</button>
+          <button data-action="back-home" class="btn bg-gray-200 flex-1 py-4 text-lg">Home 🏠</button>
+        </div>
+      ` : `<button data-action="back-home" class="btn bg-gray-200 w-full py-4 text-lg">Home 🏠</button>`}
+    </div>
+  `;
+}
+
+/* ------------------------------------------------------------------ */
+/* MATCH OVERLAY                                                       */
+/* ------------------------------------------------------------------ */
+
+function showMatchOverlay(matchInfo){
+  const room = state.room;
+  const otherUid = matchInfo.players.find(u=>u!==state.uid);
+  const other = room.players[otherUid] || { name:'Someone', emoji:'🎉' };
+  const q = room.questions[room.currentQuestionIndex];
+  const optLabel = matchInfo.option === 'A' ? q.optionA : q.optionB;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.innerHTML = `
+    <div class="sticker p-6 w-11/12 max-w-sm flex flex-col items-center gap-2 pop-in">
+      <div id="fxContainer"></div>
+      <div class="font-stamp text-3xl text-center" style="color:#ff2d78; opacity:0;" id="matchTitle">IT'S A MATCH!</div>
+      <div class="text-5xl flex items-center gap-3" style="opacity:0;" id="matchAvatars">
+        <span>${room.players[state.uid].emoji}</span><span class="text-2xl">🔥</span><span>${other.emoji}</span>
+      </div>
+      <div class="font-semibold text-center" style="opacity:0;" id="matchWith">You + ${esc(other.name)} both picked</div>
+      <div class="font-stamp text-lg text-center" style="opacity:0;" id="matchAnswer">${optLabel.emoji} ${esc(optLabel.label)}</div>
+      <div class="text-sm text-gray-500 text-center" style="opacity:0;" id="matchLine">💬 Now go ask them why!</div>
+      <button data-action="dismiss-match" class="btn bg-yellow-300 w-full py-3 text-lg mt-2" style="opacity:0;" id="matchThanksBtn">Thanks! 🙌</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay._matchInfo = matchInfo;
+  state._currentOverlay = overlay;
+
+  const fx = overlay.querySelector('#fxContainer');
+  playMatchFX(fx, randomVariant());
+
+  setTimeout(()=>{
+    ['matchTitle','matchAvatars','matchWith','matchAnswer','matchLine','matchThanksBtn'].forEach((id,i)=>{
+      const el = overlay.querySelector('#'+id);
+      el.style.transition = 'opacity .4s ease';
+      setTimeout(()=> el.style.opacity = 1, i*80);
+    });
+  }, 650);
+}
+
+function dismissMatchOverlay(){
+  if(state._currentOverlay){
+    state._currentOverlay.remove();
+    state._currentOverlay = null;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* MAIN RENDER DISPATCH                                                */
+/* ------------------------------------------------------------------ */
+
+function demoBarHtml(room){
+  const qIndex = room.currentQuestionIndex;
+  const remaining = timerRemaining(room);
+  return `
+    <div style="height:48px"></div>
+    <div class="fixed top-0 left-0 right-0 z-50 bg-black/85 text-white flex items-center justify-between gap-2 px-3 py-2 text-sm">
+      <span class="font-bold">🎛 HOST · Q${qIndex+1}/${room.questions.length}${remaining!==null?' · '+Math.ceil(remaining)+'s':''}</span>
+      <div class="flex gap-2">
+        <button data-action="next-question" class="btn bg-yellow-300 px-3 py-1 text-xs" style="box-shadow:3px 3px 0 #000;">Next⏭️</button>
+        <button data-action="end-game" class="btn bg-red-300 px-3 py-1 text-xs" style="box-shadow:3px 3px 0 #000;">End🛑</button>
+      </div>
+    </div>`;
+}
+function injectDemoBar(room){
+  if(state.mode !== 'demo' || room.status !== 'question') return;
+  app.insertAdjacentHTML('afterbegin', demoBarHtml(room));
+}
+
+function render(){
+  // Pre-room screens only apply while there's no active room yet. Once a room
+  // is created/joined, room.status alone drives what's shown (see below) —
+  // state.screen is never updated on the create/join path, so gating on it
+  // unconditionally here would strand the UI on landing/join/hostName forever.
+  if(!state.roomCode || !state.room){
+    if(state.screen === 'join') return screenJoin();
+    if(state.screen === 'hostName') return screenHostName();
+    return screenLanding();
+  }
+
+  const room = state.room;
+
+  // A real host device never plays — it only sees controls. In demo mode the
+  // lone human is both host and player, so they get the player screens below
+  // (with a small floating control bar) instead of the host-only view.
+  if(state.isHost && state.mode !== 'demo'){
+    if(room.status === 'lobby') return screenHostSetup();
+    if(room.status === 'question') return screenHostGame();
+    if(room.status === 'ended') return screenPodium();
+    return;
+  }
+
+  if(room.status === 'lobby') return state.isHost ? screenHostSetup() : screenLobby();
+  if(room.status === 'ended') return screenPodium();
+  if(room.status === 'question'){
+    const qIndex = room.currentQuestionIndex;
+    const ans = myAnswer(room, qIndex);
+    const matchInfo = myMatchInfo(room, qIndex);
+    if(matchInfo){
+      if(state.ui.lastOverlayQIndex !== qIndex){
+        state.ui.lastOverlayQIndex = qIndex;
+        screenHunting(); // render hunting first so overlay has something behind it
+        injectDemoBar(room);
+        showMatchOverlay(matchInfo);
+      } else {
+        screenMatchedWaiting(matchInfo);
+        injectDemoBar(room);
+      }
+      return;
+    }
+    if(ans === undefined){ screenAnswering(); injectDemoBar(room); return; }
+    screenHunting();
+    injectDemoBar(room);
+    return;
+  }
+}
+
+function flushPendingRoom(){
+  if(state.pendingRoom !== null){
+    const r = state.pendingRoom;
+    state.pendingRoom = null;
+    onRoomUpdate(r, true);
+  }
+}
+
+let lastQIndex = null, lastStatus = null;
+
+function onRoomUpdate(room, force=false){
+  if(room === null){
+    toast('Room closed or not found.');
+    goHome();
+    return;
+  }
+  if(state.suspendRender && !force){
+    state.pendingRoom = room;
+    return;
+  }
+  const structuralChange = force || room.status !== lastStatus || room.currentQuestionIndex !== lastQIndex;
+  lastStatus = room.status; lastQIndex = room.currentQuestionIndex;
+  state.room = room;
+
+  if(state.isHost && room.status === 'lobby' && document.getElementById('lobbyPlayersList')){
+    updateLobbyPlayersListUI();
+    return;
+  }
+
+  if(structuralChange) state.ui.triedThisQ = new Set();
+  render();
+}
+
+/* ------------------------------------------------------------------ */
+/* ACTIONS                                                             */
+/* ------------------------------------------------------------------ */
+
+let unsubscribeRoom = null;
+
+function goHome(){
+  if(unsubscribeRoom){ unsubscribeRoom(); unsubscribeRoom = null; }
+  dismissMatchOverlay();
+  clearTimerTick();
+  localStorage.removeItem('match_session');
+  state.roomCode = null; state.room = null; state.isHost = false; state.mode = null; state.demo = null;
+  state.ui = { lastOverlayQIndex:null, triedThisQ:new Set() };
+  history.replaceState(null,'',location.pathname);
+  state.screen = 'landing';
+  render();
+}
+
+function saveSession(){
+  localStorage.setItem('match_session', JSON.stringify({ roomCode: state.roomCode, isHost: state.isHost, mode: state.mode }));
+}
+
+async function handleAction(action, ds, targetEl){
+  try{
+    if(action === 'go-host'){ state.screen='hostName'; render(); return; }
+    if(action === 'go-join'){ state.screen='join'; render(); return; }
+    if(action === 'back-home'){ goHome(); return; }
+
+    if(action === 'go-demo'){
+      state.mode = 'demo';
+      state.demo = makeDemoStore();
+      state.uid = 'me';
+      state.isHost = true;
+      state.questionBank = freshQuestionBank();
+      const code = await state.demo.createRoom(state.uid, 'You');
+      await state.demo.joinRoom(code, state.uid, 'You');
+      state.roomCode = code;
+      unsubscribeRoom = activeStore().subscribe(code, onRoomUpdate);
+      saveSession();
+      return;
+    }
+
+    if(action === 'create-room'){
+      const name = document.getElementById('hostName').value.trim() || 'Host';
+      let fb;
+      try{ toast('Connecting…', 1200); fb = await ensureFirebase(); }
+      catch(e){ toast('⚠️ Could not connect. Check your internet connection and try again.'); return; }
+      state.mode = 'firebase';
+      state.uid = fb.uid;
+      state.isHost = true;
+      state.questionBank = freshQuestionBank();
+      const code = await FirebaseStore.createRoom(state.uid, name);
+      state.roomCode = code;
+      unsubscribeRoom = activeStore().subscribe(code, onRoomUpdate);
+      saveSession();
+      return;
+    }
+
+    if(action === 'submit-join'){
+      const name = document.getElementById('joinName').value.trim();
+      const code = document.getElementById('joinCode').value.trim().toUpperCase();
+      if(!name){ toast('Enter your name first'); return; }
+      if(code.length !== 4){ toast('Room codes are 4 letters'); return; }
+      let fb;
+      try{ toast('Connecting…', 1200); fb = await ensureFirebase(); }
+      catch(e){ toast('⚠️ Could not connect. Check your internet connection and try again.'); return; }
+      state.mode = 'firebase';
+      state.uid = fb.uid;
+      state.isHost = false;
+      try{
+        await FirebaseStore.joinRoom(code, state.uid, name);
+      }catch(e){ toast(e.message); return; }
+      state.roomCode = code;
+      unsubscribeRoom = activeStore().subscribe(code, onRoomUpdate);
+      saveSession();
+      return;
+    }
+
+    if(action === 'toggle-question'){
+      const q = state.questionBank.find(q=>q.id===ds.id);
+      if(q){ q.enabled = !q.enabled; updateSelectedCount(); }
+      return;
+    }
+
+    if(action === 'remove-custom-question'){
+      state.questionBank = state.questionBank.filter(q=>q.id!==ds.id);
+      renderQuestionListUI();
+      return;
+    }
+
+    if(action === 'add-custom-question'){
+      const text = document.getElementById('customText').value.trim();
+      const emojiA = document.getElementById('customEmojiA').value.trim() || '🅰️';
+      const labelA = document.getElementById('customLabelA').value.trim();
+      const emojiB = document.getElementById('customEmojiB').value.trim() || '🅱️';
+      const labelB = document.getElementById('customLabelB').value.trim();
+      if(!text || !labelA || !labelB){ toast('Fill in the question and both options'); return; }
+      const q = { id:'custom_'+Date.now(), text, optionA:{label:labelA, emoji:emojiA}, optionB:{label:labelB, emoji:emojiB}, enabled:true, custom:true };
+      state.questionBank.push(q);
+      renderQuestionListUI();
+      document.getElementById('customText').value='';
+      document.getElementById('customLabelA').value='';
+      document.getElementById('customLabelB').value='';
+      document.getElementById('customEmojiA').value='';
+      document.getElementById('customEmojiB').value='';
+      toast('Question added ✅', 1400);
+      return;
+    }
+
+    if(action === 'start-game'){
+      const enabled = state.questionBank.filter(q=>q.enabled);
+      if(enabled.length === 0){ toast('Select at least one question'); return; }
+      const timerSeconds = parseInt(document.getElementById('timerSelect').value, 10);
+      let total = parseInt(document.getElementById('totalQuestionsInput').value, 10) || enabled.length;
+      total = Math.max(1, Math.min(total, enabled.length));
+      const chosen = shuffle(enabled).slice(0,total).map(q=>({ id:q.id, text:q.text, optionA:q.optionA, optionB:q.optionB }));
+      const players = state.room ? state.room.players : {};
+      if(Object.keys(players||{}).length === 0){ toast('Waiting on players? You can still start to test.', 2200); }
+      await activeStore().startGame(state.roomCode, chosen, timerSeconds, false, players);
+      return;
+    }
+
+    if(action === 'answer-a') return chooseAnswer('A');
+    if(action === 'answer-b') return chooseAnswer('B');
+
+    if(action === 'attempt-match'){
+      const otherUid = ds.uid;
+      const qIndex = state.room.currentQuestionIndex;
+      const chipEl = document.getElementById('chip-'+otherUid);
+      let result;
+      try{
+        result = await activeStore().attemptMatch(state.roomCode, qIndex, state.uid, otherUid);
+      }catch(e){ toast('Something went wrong: ' + e.message); return; }
+      if(result.matched){
+        // onRoomUpdate via snapshot will show the overlay; nothing else to do
+      } else {
+        state.ui.triedThisQ.add(otherUid);
+        if(chipEl){
+          chipEl.classList.add('shake','tried-chip');
+          setTimeout(()=>chipEl.classList.remove('shake'), 500);
+        }
+        toast(result.reason === 'not-answered' ? '⏳ They haven\'t answered yet' : '😅 Nope, try someone else');
+      }
+      return;
+    }
+
+    if(action === 'dismiss-match'){
+      dismissMatchOverlay();
+      render();
+      return;
+    }
+
+    if(action === 'next-question'){
+      await activeStore().nextQuestion(state.roomCode, state.room);
+      return;
+    }
+    if(action === 'end-game'){
+      await activeStore().endGame(state.roomCode);
+      return;
+    }
+    if(action === 'rematch'){
+      await activeStore().rematch(state.roomCode, state.room.players);
+      return;
+    }
+  }catch(err){
+    console.error(err);
+    toast('⚠️ ' + err.message);
+  }
+}
+
+// Delegated on document.body, not #app: the match overlay is appended
+// directly to <body> (so it can sit above everything, always), which means
+// clicks on it never bubble through #app.
+document.body.addEventListener('click', (e)=>{
+  const el = e.target.closest('[data-action]');
+  if(!el) return;
+  handleAction(el.dataset.action, el.dataset, el);
+});
+
+/* ------------------------------------------------------------------ */
+/* TIMER TICK — countdown display + host auto-advance                  */
+/* ------------------------------------------------------------------ */
+
+function clearTimerTick(){
+  if(state.timerTick){ clearInterval(state.timerTick); state.timerTick = null; }
+}
+
+let advancing = false;
+
+function startTimerTick(){
+  clearTimerTick();
+  state.timerTick = setInterval(()=>{
+    const room = state.room;
+    if(!room || room.status !== 'question' || !room.settings || !room.settings.timerSeconds) return;
+    const remaining = timerRemaining(room);
+    const bar = document.getElementById('timerInnerBar');
+    if(bar) bar.style.width = Math.max(0,(remaining/room.settings.timerSeconds*100)) + '%';
+    const txt = document.getElementById('timerText');
+    if(txt) txt.textContent = Math.ceil(remaining) + 's left';
+    if(state.isHost && remaining <= 0 && !advancing){
+      advancing = true;
+      activeStore().nextQuestion(state.roomCode, room).finally(()=>{ setTimeout(()=>advancing=false, 1200); });
+    }
+  }, 300);
+}
+
+/* ------------------------------------------------------------------ */
+/* BOOT                                                                */
+/* ------------------------------------------------------------------ */
+
+async function tryResumeSession(){
+  const raw = localStorage.getItem('match_session');
+  if(!raw) return;
+  let s;
+  try{ s = JSON.parse(raw); }catch(e){ localStorage.removeItem('match_session'); return; }
+  if(!s.roomCode || s.mode === 'demo') return; // demo sessions don't persist across reload
+  state.mode = s.mode; state.roomCode = s.roomCode; state.isHost = s.isHost;
+  let fb;
+  try{ fb = await ensureFirebase(); }
+  catch(e){ localStorage.removeItem('match_session'); return; }
+  state.uid = fb.uid;
+  if(state.isHost) state.questionBank = state.questionBank || freshQuestionBank();
+  unsubscribeRoom = FirebaseStore.subscribe(s.roomCode, (room)=>{
+    if(!room || (!room.players[state.uid] && room.hostId !== state.uid)){
+      goHome();
+      return;
+    }
+    onRoomUpdate(room, true);
+  });
+}
+
+// The app renders immediately — Demo Mode and the landing screen never wait
+// on Firebase. A previous Host/Join session (if any) resumes in the background.
+function boot(){
+  startTimerTick();
+  render();
+  tryResumeSession();
+}
+boot();
+</script>
+</body>
+</html>
