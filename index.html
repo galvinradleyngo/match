@@ -56,6 +56,19 @@
     border-radius:18px;
     box-shadow:5px 5px 0 var(--ink);
   }
+  /* Lighter than .sticker — for secondary/grouped content so a screen has
+     one bold focal card, not a stack of equally-loud boxes. */
+  .card{
+    background:#fff;
+    border:2px solid rgba(13,13,18,.14);
+    border-radius:20px;
+    box-shadow:0 3px 10px rgba(13,13,18,.07);
+  }
+  .card-divider{ height:2px; background:rgba(13,13,18,.08); border-radius:1px; }
+  .section-label{
+    font-size:.7rem; font-weight:700; letter-spacing:.06em;
+    text-transform:uppercase; color:#9ca3af;
+  }
   .btn{
     font-family:'Fredoka',sans-serif;
     font-weight:700;
@@ -76,6 +89,14 @@
   }
   .chip:active{ transform:scale(.96); }
   .chip.matched-chip{ background:#dcfce7; }
+  /* Lighter than .chip — for informational (non-tappable) rows like a
+     player roster, so they don't compete visually with real tap targets. */
+  .chip-soft{
+    border:2px solid rgba(13,13,18,.12);
+    border-radius:14px;
+    background:#f7f7fa;
+  }
+  .chip-soft.matched-chip{ background:#dcfce7; border-color:rgba(13,13,18,.12); }
   .chip.tried-chip{ opacity:.55; }
   .shake{ animation:shakeAnim .45s; }
   @keyframes shakeAnim{
@@ -230,6 +251,7 @@ const state = {
     triedThisQ: new Set(),       // uid's we've tried & failed on the currently-open chooser (local only)
     pendingMatchOverlays: [],    // qIndexes with a detected-but-not-yet-shown overlay (see showMatchOverlay/dismissMatchOverlay)
     showReveal: false,           // podium screen: is the "top group answers" panel open
+    showQuestionBank: false,     // host setup screen: is the Question Bank sub-view open
   },
   timerTick: null,
   demo: null,             // demo store instance when in demo mode
@@ -796,6 +818,10 @@ function updateSelectedCount(){
   if(totalInput) totalInput.max = n || 1;
 }
 
+function screenLobbyHost(){
+  return state.ui.showQuestionBank ? screenQuestionBank() : screenHostSetup();
+}
+
 function screenHostSetup(){
   const room = state.room;
   const joinUrl = `${location.origin}${location.pathname}?room=${state.roomCode}`;
@@ -804,27 +830,92 @@ function screenHostSetup(){
     ? Math.max(0, Math.ceil((room.expiresAt.toMillis() - Date.now()) / 86400000))
     : null;
 
+  const selectedCount = state.questionBank.filter(q=>q.enabled).length;
+
   app.innerHTML = `
-    <div class="w-full max-w-md flex flex-col items-center gap-4">
+    <div class="w-full max-w-md flex flex-col items-center gap-3">
       ${Logo('text-3xl')}
-      <div class="sticker w-full p-4 flex flex-col items-center gap-2">
-        <div class="text-sm font-semibold text-gray-500">ROOM CODE</div>
-        <div class="font-stamp text-4xl tracking-widest">${state.roomCode}</div>
+
+      <div class="sticker w-full p-5 flex flex-col items-center gap-1">
+        <div class="section-label">Room Code</div>
+        <div class="font-stamp text-5xl tracking-widest">${state.roomCode}</div>
         <div id="qrcode" class="my-1"></div>
-        <div class="text-xs text-gray-500 text-center break-all">${esc(joinUrl)}</div>
-        ${daysLeft!==null ? `<div class="text-xs text-orange-600 font-semibold">⏰ This game stays active for ${daysLeft} more day${daysLeft===1?'':'s'} — use your password to reclaim it before then</div>` : ''}
+        <div class="text-xs text-gray-400 text-center break-all">${esc(joinUrl)}</div>
+      </div>
+      ${daysLeft!==null ? `<div class="text-xs text-white/85 text-center drop-shadow -mt-1">⏰ Active for ${daysLeft} more day${daysLeft===1?'':'s'} — your password reclaims it after that</div>` : ''}
+
+      <div class="card w-full p-4 flex flex-col gap-3 mt-1">
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <div class="section-label">Players</div>
+            <div class="text-xs font-semibold text-gray-400"><span id="playerCountNum">${playerCount}</span> joined</div>
+          </div>
+          <div id="lobbyPlayersList" class="flex flex-wrap gap-1.5"></div>
+        </div>
+
+        <div class="card-divider"></div>
+
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <div class="section-label">Questions</div>
+            <div class="text-sm font-semibold"><span id="selectedCountSummary">${selectedCount}</span> selected</div>
+          </div>
+          <button data-action="open-question-bank" class="btn bg-blue-200 px-4 py-2.5 text-sm shrink-0">📋 Question Bank</button>
+        </div>
+
+        <div class="card-divider"></div>
+
+        <div class="flex items-center justify-between gap-2">
+          <label class="font-semibold text-sm"># Questions this game</label>
+          <input id="totalQuestionsInput" type="number" min="1" max="22" value="10" class="w-20 text-center text-sm">
+        </div>
+        <div class="flex items-center justify-between gap-2">
+          <label class="font-semibold text-sm">⏱ Timer for hunting round</label>
+          <input type="checkbox" id="matchingTimerToggle" class="w-5 h-5 accent-pink-500">
+        </div>
+        <div class="flex items-center justify-between gap-2" id="matchingTimerDurationRow">
+          <label class="text-sm text-gray-500">Duration</label>
+          <select id="matchingTimerDuration" class="text-sm" disabled>
+            <option value="60">1 min</option>
+            <option value="120">2 min</option>
+            <option value="180" selected>3 min</option>
+            <option value="300">5 min</option>
+            <option value="600">10 min</option>
+          </select>
+        </div>
       </div>
 
-      <div class="sticker w-full p-4">
-        <div class="font-stamp text-base mb-2">PLAYERS (<span id="playerCountNum">${playerCount}</span>)</div>
-        <div id="lobbyPlayersList" class="flex flex-wrap gap-2"></div>
+      <div class="text-xs text-white/85 text-center drop-shadow px-2">Players privately answer every question first, then hit Find Matches to open the in-person hunting round.</div>
+
+      <button data-action="start-game" class="btn bg-green-300 w-full py-4 text-xl">START GAME ▶️</button>
+    </div>
+  `;
+
+  updateLobbyPlayersListUI();
+
+  const timerToggle = document.getElementById('matchingTimerToggle');
+  const timerDuration = document.getElementById('matchingTimerDuration');
+  timerToggle.addEventListener('change', ()=>{ timerDuration.disabled = !timerToggle.checked; });
+
+  try{
+    document.getElementById('qrcode').innerHTML = '';
+    new QRCode(document.getElementById('qrcode'), { text: joinUrl, width:150, height:150 });
+  }catch(e){ /* qr lib unavailable, ignore */ }
+}
+
+function screenQuestionBank(){
+  app.innerHTML = `
+    <div class="w-full max-w-md flex flex-col items-center gap-4">
+      <div class="w-full flex items-center justify-between px-1">
+        <div class="font-stamp text-lg text-white drop-shadow">📋 QUESTION BANK</div>
+        <button data-action="close-question-bank" class="btn bg-yellow-300 px-4 py-2 text-sm">Done ✓</button>
       </div>
 
       <div class="sticker w-full p-4 flex flex-col gap-3">
         <div class="flex items-center justify-between">
           <div class="font-stamp text-base">QUESTIONS (<span id="selectedCount">0</span> selected)</div>
         </div>
-        <ul id="questionListUl" class="max-h-56 overflow-y-auto scrollable"></ul>
+        <ul id="questionListUl" class="max-h-80 overflow-y-auto scrollable"></ul>
 
         <div class="flex flex-col gap-2 bg-yellow-50 rounded-xl p-3 border-2 border-black/10">
           <div class="font-semibold text-sm">➕ Add your own</div>
@@ -841,42 +932,10 @@ function screenHostSetup(){
         </div>
       </div>
 
-      <div class="sticker w-full p-4 flex flex-col gap-3">
-        <div class="flex items-center justify-between gap-2">
-          <label class="font-semibold text-sm"># Questions this game</label>
-          <input id="totalQuestionsInput" type="number" min="1" max="22" value="10" class="w-20 text-center text-sm">
-        </div>
-        <div class="flex items-center justify-between gap-2">
-          <label class="font-semibold text-sm">⏱ Timer for Find Matches round</label>
-          <input type="checkbox" id="matchingTimerToggle" class="w-5 h-5 accent-pink-500">
-        </div>
-        <div class="flex items-center justify-between gap-2" id="matchingTimerDurationRow">
-          <label class="text-sm text-gray-500">Duration</label>
-          <select id="matchingTimerDuration" class="text-sm" disabled>
-            <option value="60">1 min</option>
-            <option value="120">2 min</option>
-            <option value="180" selected>3 min</option>
-            <option value="300">5 min</option>
-            <option value="600">10 min</option>
-          </select>
-        </div>
-        <div class="text-xs text-gray-500 -mt-1">Players privately answer every question first. Then hit "Find Matches" below (from the answering screen) to open the in-person hunting round.</div>
-        <button data-action="start-game" class="btn bg-green-300 py-4 text-xl mt-2">START GAME ▶️</button>
-      </div>
+      <button data-action="close-question-bank" class="btn bg-green-300 w-full py-3 text-base">Done — Back to Setup ✓</button>
     </div>
   `;
-
   renderQuestionListUI();
-  updateLobbyPlayersListUI();
-
-  const timerToggle = document.getElementById('matchingTimerToggle');
-  const timerDuration = document.getElementById('matchingTimerDuration');
-  timerToggle.addEventListener('change', ()=>{ timerDuration.disabled = !timerToggle.checked; });
-
-  try{
-    document.getElementById('qrcode').innerHTML = '';
-    new QRCode(document.getElementById('qrcode'), { text: joinUrl, width:150, height:150 });
-  }catch(e){ /* qr lib unavailable, ignore */ }
 }
 
 function updateLobbyPlayersListUI(){
@@ -887,7 +946,7 @@ function updateLobbyPlayersListUI(){
   const entries = Object.entries(players);
   if(countEl) countEl.textContent = entries.length;
   el.innerHTML = entries.length ? entries.map(([uid,p])=>`
-    <div class="chip bg-white px-3 py-2 flex items-center gap-1 text-sm font-semibold">
+    <div class="chip-soft px-3 py-1.5 flex items-center gap-1 text-sm font-semibold">
       <span class="text-lg">${p.emoji}</span> ${esc(p.name)}
     </div>
   `).join('') : `<div class="text-gray-400 text-sm">Waiting for players to join…</div>`;
@@ -897,17 +956,17 @@ function screenLobby(){
   const room = state.room;
   const players = Object.entries(room.players||{});
   app.innerHTML = `
-    <div class="w-full max-w-sm flex flex-col items-center gap-6 mt-6">
+    <div class="w-full max-w-sm flex flex-col items-center gap-4 mt-6">
       ${Logo('text-4xl')}
-      <div class="sticker w-full p-6 flex flex-col items-center gap-3">
-        <div class="text-sm font-semibold text-gray-500">ROOM CODE</div>
+      <div class="sticker w-full p-5 flex flex-col items-center gap-1">
+        <div class="section-label">Room Code</div>
         <div class="font-stamp text-4xl tracking-widest">${state.roomCode}</div>
-        <div class="animate-pulse text-lg font-semibold mt-2">Waiting for ${esc(room.hostName)} to start… ⏳</div>
+        <div class="animate-pulse text-sm font-semibold mt-2">Waiting for ${esc(room.hostName)} to start… ⏳</div>
       </div>
-      <div class="sticker w-full p-4">
-        <div class="font-stamp text-base mb-2">PLAYERS (${players.length})</div>
-        <div class="flex flex-wrap gap-2">
-          ${players.map(([uid,p])=>`<div class="chip bg-white px-3 py-2 flex items-center gap-1 text-sm font-semibold ${uid===state.uid?'ring-4 ring-yellow-300':''}">
+      <div class="card w-full p-4">
+        <div class="section-label mb-2">Players (${players.length})</div>
+        <div class="flex flex-wrap gap-1.5">
+          ${players.map(([uid,p])=>`<div class="chip-soft px-3 py-1.5 flex items-center gap-1 text-sm font-semibold ${uid===state.uid?'ring-2 ring-yellow-400':''}">
             <span class="text-lg">${p.emoji}</span> ${esc(p.name)}
           </div>`).join('')}
         </div>
@@ -1062,29 +1121,33 @@ function screenHostAnswering(){
   const room = state.room;
   const players = Object.entries(room.players||{});
   const total = room.questions.length;
+  const doneCount = players.filter(([uid])=> room.questions.every((_,qi)=>myAnswerFor(room,qi,uid)!==undefined)).length;
 
   app.innerHTML = `
-    <div class="w-full max-w-md flex flex-col items-center gap-4 mt-2">
+    <div class="w-full max-w-md flex flex-col items-center gap-3 mt-2">
       <div class="w-full flex items-center justify-between px-1">
         <span class="text-white font-bold drop-shadow">HOST · Answering</span>
         ${Logo('text-xl')}
       </div>
-      <div class="sticker w-full p-4 text-center">
-        <div class="font-stamp text-lg mb-1">Players are answering ${total} question${total===1?'':'s'}…</div>
-        <div class="text-sm text-gray-500">Hit "Find Matches" whenever you're ready — players don't all need to be done.</div>
-      </div>
+      <div class="text-white/90 text-sm text-center drop-shadow px-2">Hit Find Matches whenever you're ready — players don't all need to be done.</div>
+
       <div class="sticker w-full p-4">
+        <div class="flex items-center justify-between mb-2">
+          <div class="section-label">Answering Progress</div>
+          <div class="text-xs font-bold text-gray-500">${doneCount}/${players.length} done</div>
+        </div>
         <div class="flex flex-wrap gap-2 max-h-64 overflow-y-auto scrollable">
           ${players.map(([uid,p])=>{
             const answeredCount = room.questions.filter((_,qi)=> myAnswerFor(room,qi,uid)!==undefined).length;
             const done = answeredCount >= total;
-            return `<div class="chip bg-white px-3 py-2 flex items-center gap-2 text-sm font-semibold ${done?'matched-chip':''}">
+            return `<div class="chip-soft px-3 py-2 flex items-center gap-2 text-sm font-semibold ${done?'matched-chip':''}">
               <span class="text-xl">${p.emoji}</span> ${esc(p.name)}
               <span class="text-xs text-gray-500">${done ? '✅ done' : `${answeredCount}/${total}`}</span>
             </div>`;
           }).join('')}
         </div>
       </div>
+
       <div class="flex w-full gap-3">
         <button data-action="find-matches" class="btn bg-pink-300 flex-1 py-4 text-lg">🔎 Find Matches</button>
         <button data-action="end-game" class="btn bg-red-300 flex-1 py-4 text-lg">End Game 🛑</button>
@@ -1135,10 +1198,7 @@ function screenQuestionList(){
         <div class="w-full timerbar-outer"><div id="timerInnerBar" class="timerbar-inner" style="width:${(remaining/room.settings.matchingTimerSeconds*100)}%"></div></div>
         <div class="text-white font-bold" id="timerText">${Math.ceil(remaining)}s left</div>
       ` : ''}
-      <div class="sticker w-full p-3 text-center">
-        <div class="font-stamp text-base">GO FIND YOUR MATCHES 👀</div>
-        <div class="text-xs text-gray-500">Tap a question, then tap who you think picked the same as you.</div>
-      </div>
+      <div class="text-white/90 text-xs text-center drop-shadow px-2">👀 Tap a question, then tap who you think picked the same as you.</div>
       <div class="w-full">${rows}</div>
     </div>
   `;
@@ -1158,7 +1218,7 @@ function screenMatchChooser(qIndex){
       <div class="w-full px-1">
         <button data-action="back-to-list" class="text-white font-bold drop-shadow">← Back to questions</button>
       </div>
-      <div class="sticker w-full p-4 text-center">
+      <div class="card w-full p-4 text-center">
         <div class="text-xs text-gray-500 mb-1">${esc(q.text)}</div>
         <div class="font-stamp text-lg">${optLabel.emoji} ${esc(optLabel.label)}</div>
         <div class="text-xs text-gray-500 mt-1">Who else picked this?</div>
@@ -1412,14 +1472,14 @@ function render(){
   // lone human is both host and player, so they get the player screens below
   // (with a small floating control bar) instead of the host-only view.
   if(state.isHost && state.mode !== 'demo'){
-    if(room.status === 'lobby') return screenHostSetup();
+    if(room.status === 'lobby') return screenLobbyHost();
     if(room.status === 'answering') return screenHostAnswering();
     if(room.status === 'matching') return screenHostMatching();
     if(room.status === 'ended') return screenPodium();
     return screenUnknownStatus(room);
   }
 
-  if(room.status === 'lobby') return state.isHost ? screenHostSetup() : screenLobby();
+  if(room.status === 'lobby') return state.isHost ? screenLobbyHost() : screenLobby();
   if(room.status === 'ended') return screenPodium();
 
   if(room.status === 'answering'){
@@ -1497,9 +1557,17 @@ function onRoomUpdate(room, force=false){
   lastStatus = room.status;
   state.room = room;
 
-  if(state.isHost && room.status === 'lobby' && document.getElementById('lobbyPlayersList')){
-    updateLobbyPlayersListUI();
-    return;
+  if(state.isHost && room.status === 'lobby'){
+    // The Question Bank sub-view has no player-list UI to patch, and a full
+    // render() here would wipe whatever the host is mid-typing into the
+    // custom-question form every time a player joins. Nothing on that
+    // screen depends on live player data, so just skip — it's current
+    // again next time screenHostSetup() renders.
+    if(state.ui.showQuestionBank) return;
+    if(document.getElementById('lobbyPlayersList')){
+      updateLobbyPlayersListUI();
+      return;
+    }
   }
 
   if(structuralChange && room.status === 'matching'){
@@ -1525,7 +1593,7 @@ function goHome(){
   // works again for any later game started in this same tab.
   localStorage.removeItem('match_session');
   state.roomCode = null; state.room = null; state.isHost = false; state.mode = null; state.demo = null;
-  state.ui = { matchingBaselineDone:false, matchedQIndexSet:new Set(), activeChooserQIndex:null, triedThisQ:new Set(), pendingMatchOverlays:[], showReveal:false };
+  state.ui = { matchingBaselineDone:false, matchedQIndexSet:new Set(), activeChooserQIndex:null, triedThisQ:new Set(), pendingMatchOverlays:[], showReveal:false, showQuestionBank:false };
   history.replaceState(null,'',location.pathname);
   state.screen = 'landing';
   render();
@@ -1617,6 +1685,17 @@ async function handleAction(action, ds, targetEl){
       state.roomCode = code;
       unsubscribeRoom = activeStore().subscribe(code, onRoomUpdate);
       saveSession();
+      return;
+    }
+
+    if(action === 'open-question-bank'){
+      state.ui.showQuestionBank = true;
+      render();
+      return;
+    }
+    if(action === 'close-question-bank'){
+      state.ui.showQuestionBank = false;
+      render();
       return;
     }
 
