@@ -198,6 +198,13 @@ function ensureFirebase(){
     });
     return { uid: fbUid };
   })();
+  // If setup fails (bad network, blocked CDN/auth domain, etc.), don't leave the
+  // failed attempt cached forever — clear it so the *next* tap (e.g. retrying
+  // Reclaim) actually retries instead of silently replaying the same old error.
+  firebaseReadyPromise = firebaseReadyPromise.catch(err => {
+    firebaseReadyPromise = null;
+    throw err;
+  });
   return firebaseReadyPromise;
 }
 
