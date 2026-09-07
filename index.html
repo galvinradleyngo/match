@@ -250,6 +250,16 @@ function shuffle(arr){
 
 function pairKey(a,b){ return [a,b].sort().join('__'); }
 
+const ROOM_LIFETIME_MS = 14 * 24 * 60 * 60 * 1000; // 2 weeks
+
+// Not real cryptographic security (this is a client-only app with no server
+// to keep a secret) — same trust level as the room code itself, just a
+// second shared secret so a random guesser can't casually take over as host.
+async function sha256Hex(text){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
 function pickAvatar(playersMap){
   const used = new Set(Object.values(playersMap||{}).map(p=>p.emoji));
   const free = EMOJI_LIST.filter(e=>!used.has(e));
@@ -275,7 +285,7 @@ function randomCode(){
 }
 
 const FirebaseStore = {
-  async createRoom(hostUid, hostName){
+  async createRoom(hostUid, hostName, hostPasswordHash){
     await ensureFirebase();
     for(let attempt=0; attempt<8; attempt++){
       const code = randomCode();
@@ -284,6 +294,7 @@ const FirebaseStore = {
       await _setDoc(roomRef(code), {
         hostId: hostUid,
         hostName,
+        hostPasswordHash,
         status: 'lobby',
         settings: { timerSeconds: 20, totalQuestions: 10 },
         questions: [],
@@ -293,10 +304,24 @@ const FirebaseStore = {
         answers: {},
         confirmedPairs: {},
         createdAt: _serverTimestamp(),
+        expiresAt: new Date(Date.now() + ROOM_LIFETIME_MS),
       });
       return code;
     }
     throw new Error('Could not generate a room code, try again');
+  },
+
+  async reclaimHost(code, passwordHash, newHostUid){
+    await ensureFirebase();
+    const ref = roomRef(code);
+    const snap = await _getDoc(ref);
+    if(!snap.exists()) throw new Error("Room not found — it may have expired (games are deleted after 2 weeks).");
+    const data = snap.data();
+    if(!data.hostPasswordHash) throw new Error('This room has no recovery password on file.');
+    if(data.hostPasswordHash !== passwordHash) throw new Error('Incorrect password.');
+    const expiresAt = new Date(Date.now() + ROOM_LIFETIME_MS);
+    await _updateDoc(ref, { hostId: newHostUid, hostPasswordHash: data.hostPasswordHash, expiresAt });
+    return { ...data, hostId: newHostUid, expiresAt };
   },
 
   async joinRoom(code, uid, name){
@@ -660,6 +685,7 @@ function screenLanding(){
         <button data-action="go-join" class="btn bg-pink-300 py-4 text-xl">📱 Join a Game</button>
         <button data-action="go-demo" class="btn bg-purple-200 py-3 text-base">🤖 Try Demo Mode (solo)</button>
       </div>
+      <button data-action="go-reclaim" class="text-sm underline text-white/90 drop-shadow">🔑 Hosted a game before? Reclaim it</button>
     </div>
   `;
 }
@@ -689,11 +715,30 @@ function screenHostName(){
       <div class="sticker w-full p-6 flex flex-col gap-4">
         <h2 class="font-stamp text-xl text-center">HOST A GAME</h2>
         <input id="hostName" type="text" maxlength="16" placeholder="Your name (host)" class="w-full text-lg" autocomplete="off">
+        <input id="hostPassword" type="password" maxlength="40" placeholder="Set a recovery password" class="w-full text-lg" autocomplete="off">
+        <div class="text-xs text-gray-500 -mt-2">🔑 You'll need this to reclaim your game later. ⏰ Games (and all their data) auto-delete after 2 weeks.</div>
         <button data-action="create-room" class="btn bg-yellow-300 py-4 text-xl">Create Room 🎊</button>
         <button data-action="back-home" class="text-sm underline text-gray-500 mt-1">← back</button>
       </div>
     </div>
   `;
+}
+
+function screenReclaim(){
+  app.innerHTML = `
+    <div class="w-full max-w-sm flex flex-col items-center gap-6 mt-10">
+      ${Logo('text-4xl')}
+      <div class="sticker w-full p-6 flex flex-col gap-4">
+        <h2 class="font-stamp text-xl text-center">RECLAIM YOUR GAME</h2>
+        <div class="text-xs text-gray-500 text-center -mt-2">Got disconnected or switched phones? Enter your room code and the password you set when you created it.</div>
+        <input id="reclaimCode" type="text" maxlength="4" placeholder="ROOM CODE" class="w-full text-lg text-center uppercase tracking-widest font-bold" autocomplete="off">
+        <input id="reclaimPassword" type="password" maxlength="40" placeholder="Recovery password" class="w-full text-lg" autocomplete="off">
+        <button data-action="submit-reclaim" class="btn bg-purple-200 py-4 text-xl">Reclaim 🔑</button>
+        <button data-action="back-home" class="text-sm underline text-gray-500 mt-1">← back</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('reclaimCode').addEventListener('input', (e)=>{ e.target.value = e.target.value.toUpperCase(); });
 }
 
 function questionBankRow(q){
@@ -729,6 +774,9 @@ function screenHostSetup(){
   const room = state.room;
   const joinUrl = `${location.origin}${location.pathname}?room=${state.roomCode}`;
   const playerCount = Object.keys(room.players||{}).length;
+  const daysLeft = (room.expiresAt && room.expiresAt.toMillis)
+    ? Math.max(0, Math.ceil((room.expiresAt.toMillis() - Date.now()) / 86400000))
+    : null;
 
   app.innerHTML = `
     <div class="w-full max-w-md flex flex-col items-center gap-4">
@@ -738,6 +786,7 @@ function screenHostSetup(){
         <div class="font-stamp text-4xl tracking-widest">${state.roomCode}</div>
         <div id="qrcode" class="my-1"></div>
         <div class="text-xs text-gray-500 text-center break-all">${esc(joinUrl)}</div>
+        ${daysLeft!==null ? `<div class="text-xs text-orange-600 font-semibold">⏰ This game auto-deletes in ${daysLeft} day${daysLeft===1?'':'s'} — use your password to reclaim it before then</div>` : ''}
       </div>
 
       <div class="sticker w-full p-4">
@@ -1169,6 +1218,7 @@ function render(){
   if(!state.roomCode || !state.room){
     if(state.screen === 'join') return screenJoin();
     if(state.screen === 'hostName') return screenHostName();
+    if(state.screen === 'reclaim') return screenReclaim();
     return screenLanding();
   }
 
@@ -1268,6 +1318,7 @@ async function handleAction(action, ds, targetEl){
   try{
     if(action === 'go-host'){ state.screen='hostName'; render(); return; }
     if(action === 'go-join'){ state.screen='join'; render(); return; }
+    if(action === 'go-reclaim'){ state.screen='reclaim'; render(); return; }
     if(action === 'back-home'){ goHome(); return; }
 
     if(action === 'go-demo'){
@@ -1286,6 +1337,8 @@ async function handleAction(action, ds, targetEl){
 
     if(action === 'create-room'){
       const name = document.getElementById('hostName').value.trim() || 'Host';
+      const password = document.getElementById('hostPassword').value;
+      if(!password || password.length < 4){ toast('Set a recovery password (4+ characters)'); return; }
       let fb;
       try{ toast('Connecting…', 1200); fb = await ensureFirebase(); }
       catch(e){ toast('⚠️ Could not connect. Check your internet connection and try again.'); return; }
@@ -1293,10 +1346,36 @@ async function handleAction(action, ds, targetEl){
       state.uid = fb.uid;
       state.isHost = true;
       state.questionBank = freshQuestionBank();
-      const code = await FirebaseStore.createRoom(state.uid, name);
+      const passwordHash = await sha256Hex(password);
+      const code = await FirebaseStore.createRoom(state.uid, name, passwordHash);
       state.roomCode = code;
       unsubscribeRoom = activeStore().subscribe(code, onRoomUpdate);
       saveSession();
+      toast('🔑 Room created! Remember your password — it recovers this game for the next 2 weeks.', 4000);
+      return;
+    }
+
+    if(action === 'submit-reclaim'){
+      const code = document.getElementById('reclaimCode').value.trim().toUpperCase();
+      const password = document.getElementById('reclaimPassword').value;
+      if(code.length !== 4){ toast('Room codes are 4 letters'); return; }
+      if(!password){ toast('Enter your recovery password'); return; }
+      let fb;
+      try{ toast('Connecting…', 1200); fb = await ensureFirebase(); }
+      catch(e){ toast('⚠️ Could not connect. Check your internet connection and try again.'); return; }
+      state.uid = fb.uid;
+      const passwordHash = await sha256Hex(password);
+      let room;
+      try{
+        room = await FirebaseStore.reclaimHost(code, passwordHash, state.uid);
+      }catch(e){ toast(e.message); return; }
+      state.mode = 'firebase';
+      state.isHost = true;
+      state.questionBank = freshQuestionBank();
+      state.roomCode = code;
+      unsubscribeRoom = activeStore().subscribe(code, onRoomUpdate);
+      saveSession();
+      toast('🔑 Game reclaimed — you\'re the host again!', 2600);
       return;
     }
 
