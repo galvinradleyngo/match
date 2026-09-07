@@ -753,6 +753,7 @@ function screenJoin(){
       ${Logo('text-4xl')}
       <div class="sticker w-full p-6 flex flex-col gap-4">
         <h2 class="font-stamp text-xl text-center">JOIN ROOM</h2>
+        <div class="text-xs text-gray-500 text-center -mt-2">Already playing this game? Enter the same room code again to jump back in.</div>
         <input id="joinName" type="text" maxlength="16" placeholder="Your name" class="w-full text-lg" autocomplete="off">
         <input id="joinCode" type="text" maxlength="4" placeholder="ROOM CODE" value="${esc(prefill)}" class="w-full text-lg text-center uppercase tracking-widest font-bold" autocomplete="off">
         <button data-action="submit-join" class="btn bg-green-300 py-4 text-xl">Let's Go 🚀</button>
@@ -1598,16 +1599,11 @@ function goHome(){
   // boot() for the lifetime of the tab, and its callback already no-ops when
   // state.room is null — clearing it would mean the timer silently never
   // works again for any later game started in this same tab.
-  localStorage.removeItem('match_session');
   state.roomCode = null; state.room = null; state.isHost = false; state.mode = null; state.demo = null;
   state.ui = { matchingBaselineDone:false, matchedQIndexSet:new Set(), activeChooserQIndex:null, triedThisQ:new Set(), pendingMatchOverlays:[], showReveal:false, showQuestionBank:false };
   history.replaceState(null,'',location.pathname);
   state.screen = 'landing';
   render();
-}
-
-function saveSession(){
-  localStorage.setItem('match_session', JSON.stringify({ roomCode: state.roomCode, isHost: state.isHost, mode: state.mode }));
 }
 
 async function handleAction(action, ds, targetEl){
@@ -1627,7 +1623,6 @@ async function handleAction(action, ds, targetEl){
       await state.demo.joinRoom(code, state.uid, 'You');
       state.roomCode = code;
       unsubscribeRoom = activeStore().subscribe(code, onRoomUpdate);
-      saveSession();
       return;
     }
 
@@ -1646,7 +1641,6 @@ async function handleAction(action, ds, targetEl){
       const code = await FirebaseStore.createRoom(state.uid, name, passwordHash);
       state.roomCode = code;
       unsubscribeRoom = activeStore().subscribe(code, onRoomUpdate);
-      saveSession();
       toast('🔑 Room created! Remember your password — it recovers this game for the next 2 weeks.', 4000);
       return;
     }
@@ -1670,7 +1664,6 @@ async function handleAction(action, ds, targetEl){
       state.questionBank = freshQuestionBank();
       state.roomCode = code;
       unsubscribeRoom = activeStore().subscribe(code, onRoomUpdate);
-      saveSession();
       toast('🔑 Game reclaimed — you\'re the host again!', 2600);
       return;
     }
@@ -1691,7 +1684,6 @@ async function handleAction(action, ds, targetEl){
       }catch(e){ toast(e.message); return; }
       state.roomCode = code;
       unsubscribeRoom = activeStore().subscribe(code, onRoomUpdate);
-      saveSession();
       return;
     }
 
@@ -1868,38 +1860,13 @@ function startTimerTick(){
 /* BOOT                                                                */
 /* ------------------------------------------------------------------ */
 
-async function tryResumeSession(){
-  const raw = localStorage.getItem('match_session');
-  if(!raw) return;
-  let s;
-  try{ s = JSON.parse(raw); }catch(e){ localStorage.removeItem('match_session'); return; }
-  if(!s.roomCode || s.mode === 'demo') return; // demo sessions don't persist across reload
-  state.mode = s.mode; state.roomCode = s.roomCode; state.isHost = s.isHost;
-  let fb;
-  try{ fb = await ensureFirebase(); }
-  catch(e){ localStorage.removeItem('match_session'); return; }
-  state.uid = fb.uid;
-  if(state.isHost) state.questionBank = state.questionBank || freshQuestionBank();
-  unsubscribeRoom = FirebaseStore.subscribe(s.roomCode, (room)=>{
-    if(!room || (!room.players[state.uid] && room.hostId !== state.uid)){
-      goHome();
-      return;
-    }
-    if(isExpired(room)){
-      toast(EXPIRED_MSG);
-      goHome();
-      return;
-    }
-    onRoomUpdate(room, true);
-  });
-}
-
-// The app renders immediately — Demo Mode and the landing screen never wait
-// on Firebase. A previous Host/Join session (if any) resumes in the background.
+// Reloading always lands back on the landing screen — no auto-resume of a
+// previous Host/Join session. If you get disconnected or refresh mid-game,
+// use "Hosted a game before? Reclaim it" (host) or rejoin with the room code
+// (player) rather than the app silently picking a session back up for you.
 function boot(){
   startTimerTick();
   render();
-  tryResumeSession();
 }
 boot();
 </script>
