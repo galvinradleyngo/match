@@ -1416,7 +1416,7 @@ function render(){
     if(room.status === 'answering') return screenHostAnswering();
     if(room.status === 'matching') return screenHostMatching();
     if(room.status === 'ended') return screenPodium();
-    return;
+    return screenUnknownStatus(room);
   }
 
   if(room.status === 'lobby') return state.isHost ? screenHostSetup() : screenLobby();
@@ -1448,6 +1448,29 @@ function render(){
     if(newQIndex !== null && !state._currentOverlay) showMatchOverlay(myMatchInfo(room, newQIndex), newQIndex);
     return;
   }
+
+  return screenUnknownStatus(room);
+}
+
+// Reached only for a room.status this build doesn't recognize — in practice,
+// a room created/left mid-game under an older version of this app (e.g. the
+// pre-rework "question" status). Silently rendering nothing here would leave
+// whatever screen was already up on screen with no feedback — e.g. right
+// after a successful reclaim, the reclaim form would just sit there looking
+// like reclaim failed even though the hostId write went through fine.
+function screenUnknownStatus(room){
+  app.innerHTML = `
+    <div class="w-full max-w-sm flex flex-col items-center gap-6 mt-16 text-center">
+      ${Logo('text-3xl')}
+      <div class="sticker w-full p-6 flex flex-col items-center gap-3">
+        <div class="text-5xl">🛠️</div>
+        <div class="font-stamp text-lg">This game is from an older version of MATCH</div>
+        <div class="text-sm text-gray-500">Its saved status ("${esc(room.status)}") isn't one this version plays — ${state.isHost ? 'hit Rematch to reset it and start fresh with the same room and players, or go' : 'ask your host to start a new game, or go'} home and start a new game.</div>
+        ${state.isHost ? `<button data-action="rematch" class="btn bg-green-300 w-full py-3 text-base mt-1">Rematch 🔁</button>` : ''}
+        <button data-action="back-home" class="btn bg-gray-200 w-full py-3 text-base">Home 🏠</button>
+      </div>
+    </div>
+  `;
 }
 
 function flushPendingRoom(){
