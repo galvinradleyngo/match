@@ -16,9 +16,11 @@ rules_version = '2';
 // everything else: rules stop unauthenticated access, not a determined
 // cheater with devtools open.
 //
-// Rooms expire via a Firestore TTL policy on the `expiresAt` field
-// (configured in the console/CLI, not here) — see README "One-time
-// Firebase setup". TTL deletes bypass these rules entirely.
+// Rooms carry an `expiresAt` field that the app checks client-side to
+// refuse a game older than 2 weeks — see README "Data retention". Stale
+// documents aren't physically deleted unless you opt into the optional
+// Firestore TTL policy described there (a TTL delete would bypass these
+// rules entirely, same as any other TTL sweep).
 service cloud.firestore {
   match /databases/{database}/documents {
     match /rooms/{roomCode} {
