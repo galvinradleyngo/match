@@ -218,14 +218,18 @@ const state = {
   uid: null,
   roomCode: null,
   room: null,            // latest room data
-  screen: 'landing',     // landing | join | hostSetup | lobby | question | hunting | matched-waiting | hostGame | podium
+  screen: 'landing',     // landing | join | hostName | reclaim (pre-room only; once a room exists, room.status drives everything)
   isHost: false,
   questionBank: null,    // host-local, only for hostSetup screen
   suspendRender: false,
   pendingRoom: null,
   ui: {
-    lastOverlayQIndex: null,   // qIndex we've already shown the match overlay for
-    triedThisQ: new Set(),     // uid's we've tried & failed this question (local only)
+    matchingBaselineDone: false, // has detectNewMatch() established its baseline for the current matching round yet
+    matchedQIndexSet: new Set(), // qIndexes we've already accounted for (shown the overlay, or seen on baseline)
+    activeChooserQIndex: null,   // null = showing the question list; a number = showing that question's match chooser
+    triedThisQ: new Set(),       // uid's we've tried & failed on the currently-open chooser (local only)
+    pendingMatchOverlays: [],    // qIndexes with a detected-but-not-yet-shown overlay (see showMatchOverlay/dismissMatchOverlay)
+    showReveal: false,           // podium screen: is the "top group answers" panel open
   },
   timerTick: null,
   demo: null,             // demo store instance when in demo mode
@@ -307,10 +311,9 @@ const FirebaseStore = {
         hostName,
         hostPasswordHash,
         status: 'lobby',
-        settings: { timerSeconds: 20, totalQuestions: 10 },
+        settings: { matchingTimerSeconds: 0, totalQuestions: 10 },
         questions: [],
-        currentQuestionIndex: 0,
-        questionStartedAt: null,
+        matchingStartedAt: null,
         players: {},
         answers: {},
         confirmedPairs: {},
@@ -365,21 +368,25 @@ const FirebaseStore = {
     }, (err)=>{ console.error(err); toast('Connection issue: ' + err.message); });
   },
 
-  async startGame(code, questions, timerSeconds, resetScores, players){
+  async startGame(code, questions, matchingTimerSeconds, resetScores, players){
     await ensureFirebase();
     const updates = {
-      status: 'question',
+      status: 'answering',
       questions,
-      currentQuestionIndex: 0,
-      questionStartedAt: _serverTimestamp(),
+      matchingStartedAt: null,
       answers: {},
       confirmedPairs: {},
-      settings: { timerSeconds, totalQuestions: questions.length },
+      settings: { matchingTimerSeconds, totalQuestions: questions.length },
     };
     if(resetScores && players){
       for(const uid in players) updates[`players.${uid}.matchCount`] = 0;
     }
     await _updateDoc(roomRef(code), updates);
+  },
+
+  async startMatching(code){
+    await ensureFirebase();
+    await _updateDoc(roomRef(code), { status: 'matching', matchingStartedAt: _serverTimestamp() });
   },
 
   async submitAnswer(code, qIndex, uid, choice){
@@ -412,16 +419,6 @@ const FirebaseStore = {
     });
   },
 
-  async nextQuestion(code, room){
-    await ensureFirebase();
-    const nextIdx = room.currentQuestionIndex + 1;
-    if(nextIdx >= room.questions.length){
-      await this.endGame(code);
-      return;
-    }
-    await _updateDoc(roomRef(code), { currentQuestionIndex: nextIdx, questionStartedAt: _serverTimestamp() });
-  },
-
   async endGame(code){
     await ensureFirebase();
     await _updateDoc(roomRef(code), { status: 'ended' });
@@ -430,7 +427,7 @@ const FirebaseStore = {
   async rematch(code, players){
     await ensureFirebase();
     const updates = {
-      status: 'lobby', currentQuestionIndex: 0, questionStartedAt: null,
+      status: 'lobby', matchingStartedAt: null,
       answers: {}, confirmedPairs: {}, questions: [],
     };
     for(const uid in players) updates[`players.${uid}.matchCount`] = 0;
@@ -445,31 +442,49 @@ const FirebaseStore = {
 function makeDemoStore(){
   let room = null;
   const listeners = [];
+  let matchLoopTimer = null;
   const notify = () => listeners.forEach(fn=>fn(room ? {...room} : null));
 
-  function botsAnswer(){
-    const qIndex = room.currentQuestionIndex;
+  // Bots answer every question up front (staggered, so the host dashboard's
+  // per-player progress isn't just instantly 100%), independent of whatever
+  // question the human is currently on — there's no shared "current
+  // question" anymore now that answering is a private, self-paced phase.
+  function botsAnswerAll(){
     Object.keys(room.players).forEach(uid=>{
       if(!uid.startsWith('bot_')) return;
-      setTimeout(()=>{
-        if(!room || room.currentQuestionIndex !== qIndex) return;
-        const choice = Math.random() < 0.5 ? 'A' : 'B';
-        room.answers[qIndex] = room.answers[qIndex] || {};
-        room.answers[qIndex][uid] = choice;
-        notify();
-        botTryMatch(uid, qIndex);
-      }, 500 + Math.random()*1800);
+      room.questions.forEach((_, qIndex)=>{
+        setTimeout(()=>{
+          if(!room || room.status !== 'answering') return;
+          const choice = Math.random() < 0.5 ? 'A' : 'B';
+          room.answers[qIndex] = room.answers[qIndex] || {};
+          room.answers[qIndex][uid] = choice;
+          notify();
+        }, 300 + qIndex*180 + Math.random()*500);
+      });
     });
   }
 
-  function botTryMatch(botUid, qIndex){
-    setTimeout(()=>{
-      if(!room || room.currentQuestionIndex !== qIndex) return;
-      const others = Object.keys(room.players).filter(u=>u!==botUid);
+  function stopBotMatching(){
+    if(matchLoopTimer){ clearInterval(matchLoopTimer); matchLoopTimer = null; }
+  }
+
+  // During the matching round, bots periodically pick a random question and
+  // a random other player to try — mirroring what a human does by tapping
+  // through the question list, so the human sees other matches (and the
+  // "already-matched"/"no-match" outcomes) happening live in the background.
+  function startBotMatching(){
+    stopBotMatching();
+    matchLoopTimer = setInterval(()=>{
+      if(!room || room.status !== 'matching'){ stopBotMatching(); return; }
+      const botUids = Object.keys(room.players).filter(u=>u.startsWith('bot_'));
+      const bot = botUids[Math.floor(Math.random()*botUids.length)];
+      if(!bot) return;
+      const qIndex = Math.floor(Math.random()*room.questions.length);
+      const others = Object.keys(room.players).filter(u=>u!==bot);
       const target = others[Math.floor(Math.random()*others.length)];
       if(!target) return;
-      store.attemptMatch(null, qIndex, botUid, target);
-    }, 600 + Math.random()*1500);
+      store.attemptMatch(null, qIndex, bot, target);
+    }, 900);
   }
 
   const store = {
@@ -477,8 +492,8 @@ function makeDemoStore(){
       const code = 'DEMO';
       room = {
         id: code, hostId: hostUid, hostName, status:'lobby',
-        settings:{ timerSeconds:15, totalQuestions:8 },
-        questions:[], currentQuestionIndex:0, questionStartedAt:null,
+        settings:{ matchingTimerSeconds:0, totalQuestions:8 },
+        questions:[], matchingStartedAt:null,
         players:{}, answers:{}, confirmedPairs:{}, createdAt:Date.now(),
       };
       const botCount = 3;
@@ -494,16 +509,20 @@ function makeDemoStore(){
       return room;
     },
     subscribe(code, cb){ listeners.push(cb); cb({...room}); return ()=>{}; },
-    async startGame(code, questions, timerSeconds, resetScores, players){
+    async startGame(code, questions, matchingTimerSeconds, resetScores, players){
       room.questions = questions;
-      room.status = 'question';
-      room.currentQuestionIndex = 0;
-      room.questionStartedAt = { toMillis: ()=>Date.now() };
+      room.status = 'answering';
       room.answers = {}; room.confirmedPairs = {};
-      room.settings = { timerSeconds, totalQuestions: questions.length };
+      room.settings = { matchingTimerSeconds, totalQuestions: questions.length };
       if(resetScores) Object.values(room.players).forEach(p=>p.matchCount=0);
       notify();
-      botsAnswer();
+      botsAnswerAll();
+    },
+    async startMatching(code){
+      room.status = 'matching';
+      room.matchingStartedAt = { toMillis: ()=>Date.now() };
+      notify();
+      startBotMatching();
     },
     async submitAnswer(code, qIndex, uid, choice){
       room.answers[qIndex] = room.answers[qIndex] || {};
@@ -531,17 +550,10 @@ function makeDemoStore(){
       notify();
       return result;
     },
-    async nextQuestion(code, roomArg){
-      const nextIdx = roomArg.currentQuestionIndex + 1;
-      if(nextIdx >= roomArg.questions.length){ await store.endGame(); return; }
-      room.currentQuestionIndex = nextIdx;
-      room.questionStartedAt = { toMillis: ()=>Date.now() };
-      notify();
-      botsAnswer();
-    },
-    async endGame(){ room.status = 'ended'; notify(); },
+    async endGame(){ stopBotMatching(); room.status = 'ended'; notify(); },
     async rematch(code, players){
-      room.status='lobby'; room.currentQuestionIndex=0; room.questionStartedAt=null;
+      stopBotMatching();
+      room.status='lobby'; room.matchingStartedAt=null;
       room.answers={}; room.confirmedPairs={}; room.questions=[];
       Object.values(room.players).forEach(p=>p.matchCount=0);
       notify();
@@ -675,10 +687,11 @@ function Logo(sizeClass='text-3xl'){
 }
 
 function timerRemaining(room){
-  if(!room.settings || !room.settings.timerSeconds) return null;
-  if(!room.questionStartedAt || !room.questionStartedAt.toMillis) return room.settings.timerSeconds;
-  const elapsed = (Date.now() - room.questionStartedAt.toMillis())/1000;
-  return Math.max(0, room.settings.timerSeconds - elapsed);
+  if(room.status !== 'matching') return null;
+  if(!room.settings || !room.settings.matchingTimerSeconds) return null;
+  if(!room.matchingStartedAt || !room.matchingStartedAt.toMillis) return room.settings.matchingTimerSeconds;
+  const elapsed = (Date.now() - room.matchingStartedAt.toMillis())/1000;
+  return Math.max(0, room.settings.matchingTimerSeconds - elapsed);
 }
 
 /* ------------------------------------------------------------------ */
@@ -830,20 +843,24 @@ function screenHostSetup(){
 
       <div class="sticker w-full p-4 flex flex-col gap-3">
         <div class="flex items-center justify-between gap-2">
-          <label class="font-semibold text-sm">⏱ Timer per question</label>
-          <select id="timerSelect" class="text-sm">
-            <option value="0">No timer (manual)</option>
-            <option value="10">10s</option>
-            <option value="15" selected>15s</option>
-            <option value="20">20s</option>
-            <option value="30">30s</option>
-            <option value="45">45s</option>
-          </select>
-        </div>
-        <div class="flex items-center justify-between gap-2">
           <label class="font-semibold text-sm"># Questions this game</label>
           <input id="totalQuestionsInput" type="number" min="1" max="22" value="10" class="w-20 text-center text-sm">
         </div>
+        <div class="flex items-center justify-between gap-2">
+          <label class="font-semibold text-sm">⏱ Timer for Find Matches round</label>
+          <input type="checkbox" id="matchingTimerToggle" class="w-5 h-5 accent-pink-500">
+        </div>
+        <div class="flex items-center justify-between gap-2" id="matchingTimerDurationRow">
+          <label class="text-sm text-gray-500">Duration</label>
+          <select id="matchingTimerDuration" class="text-sm" disabled>
+            <option value="60">1 min</option>
+            <option value="120">2 min</option>
+            <option value="180" selected>3 min</option>
+            <option value="300">5 min</option>
+            <option value="600">10 min</option>
+          </select>
+        </div>
+        <div class="text-xs text-gray-500 -mt-1">Players privately answer every question first. Then hit "Find Matches" below (from the answering screen) to open the in-person hunting round.</div>
         <button data-action="start-game" class="btn bg-green-300 py-4 text-xl mt-2">START GAME ▶️</button>
       </div>
     </div>
@@ -851,6 +868,10 @@ function screenHostSetup(){
 
   renderQuestionListUI();
   updateLobbyPlayersListUI();
+
+  const timerToggle = document.getElementById('matchingTimerToggle');
+  const timerDuration = document.getElementById('matchingTimerDuration');
+  timerToggle.addEventListener('change', ()=>{ timerDuration.disabled = !timerToggle.checked; });
 
   try{
     document.getElementById('qrcode').innerHTML = '';
@@ -895,8 +916,11 @@ function screenLobby(){
   `;
 }
 
+function myAnswerFor(room, qIndex, uid){
+  return room.answers && room.answers[qIndex] ? room.answers[qIndex][uid] : undefined;
+}
 function myAnswer(room, qIndex){
-  return room.answers && room.answers[qIndex] ? room.answers[qIndex][state.uid] : undefined;
+  return myAnswerFor(room, qIndex, state.uid);
 }
 function myMatchInfo(room, qIndex){
   const pairs = (room.confirmedPairs && room.confirmedPairs[qIndex]) || {};
@@ -906,23 +930,27 @@ function myMatchInfo(room, qIndex){
   }
   return null;
 }
+// The first question (in session order) the current player hasn't answered
+// yet, or -1 once they've answered all of them. Deriving this from the
+// stored answers (rather than tracking a local "which question am I on"
+// index) means a mid-answering page reload just resumes correctly.
+function nextUnansweredIndex(room){
+  for(let i=0;i<room.questions.length;i++){
+    if(myAnswer(room, i) === undefined) return i;
+  }
+  return -1;
+}
 
-let dragCtx = null;
-
-function screenAnswering(){
+function screenAnswering(qIndex){
   const room = state.room;
-  const q = room.questions[room.currentQuestionIndex];
-  const remaining = timerRemaining(room);
+  const q = room.questions[qIndex];
 
   app.innerHTML = `
     <div class="w-full max-w-sm flex flex-col items-center gap-4 mt-2">
       <div class="w-full flex items-center justify-between px-1">
-        <span class="text-white font-bold drop-shadow">Q${room.currentQuestionIndex+1}/${room.questions.length}</span>
+        <span class="text-white font-bold drop-shadow">Q${qIndex+1}/${room.questions.length}</span>
         ${Logo('text-xl')}
       </div>
-      ${remaining!==null ? `
-        <div class="w-full timerbar-outer"><div id="timerInnerBar" class="timerbar-inner" style="width:${(remaining/room.settings.timerSeconds*100)}%"></div></div>
-      ` : ''}
 
       <div class="relative w-full" style="height:400px;">
         <div id="swipeCard" class="swipe-card sticker absolute inset-0 p-6 flex flex-col cursor-grab select-none">
@@ -1009,33 +1037,131 @@ function attachSwipeHandlers(q){
 async function chooseAnswer(choice){
   state.suspendRender = false;
   const room = state.room;
-  const qIndex = room.currentQuestionIndex;
+  const qIndex = nextUnansweredIndex(room);
+  if(qIndex === -1){ flushPendingRoom(); return; } // already answered everything (e.g. double-tap)
   try{
     await activeStore().submitAnswer(state.roomCode, qIndex, state.uid, choice);
   }catch(e){ toast('Could not submit answer: ' + e.message); }
   flushPendingRoom();
 }
 
-function screenHunting(){
+function screenAnsweringDone(){
+  app.innerHTML = `
+    <div class="w-full max-w-sm flex flex-col items-center gap-6 mt-16 text-center">
+      ${Logo('text-3xl')}
+      <div class="sticker w-full p-6 flex flex-col items-center gap-3">
+        <div class="text-5xl">✅</div>
+        <div class="font-stamp text-xl">All answered!</div>
+        <div class="animate-pulse font-semibold mt-2">Waiting for the host to start Find Matches… ⏳</div>
+      </div>
+    </div>
+  `;
+}
+
+function screenHostAnswering(){
   const room = state.room;
-  const qIndex = room.currentQuestionIndex;
-  const others = Object.entries(room.players||{}).filter(([uid])=>uid!==state.uid);
-  const pairs = (room.confirmedPairs && room.confirmedPairs[qIndex]) || {};
-  const answeredSet = new Set(Object.keys((room.answers && room.answers[qIndex]) || {}));
-  const remaining = timerRemaining(room);
+  const players = Object.entries(room.players||{});
+  const total = room.questions.length;
 
   app.innerHTML = `
-    <div class="w-full max-w-sm flex flex-col items-center gap-4 mt-2">
+    <div class="w-full max-w-md flex flex-col items-center gap-4 mt-2">
       <div class="w-full flex items-center justify-between px-1">
-        <span class="text-white font-bold drop-shadow">Q${qIndex+1}/${room.questions.length}</span>
+        <span class="text-white font-bold drop-shadow">HOST · Answering</span>
+        ${Logo('text-xl')}
+      </div>
+      <div class="sticker w-full p-4 text-center">
+        <div class="font-stamp text-lg mb-1">Players are answering ${total} question${total===1?'':'s'}…</div>
+        <div class="text-sm text-gray-500">Hit "Find Matches" whenever you're ready — players don't all need to be done.</div>
+      </div>
+      <div class="sticker w-full p-4">
+        <div class="flex flex-wrap gap-2 max-h-64 overflow-y-auto scrollable">
+          ${players.map(([uid,p])=>{
+            const answeredCount = room.questions.filter((_,qi)=> myAnswerFor(room,qi,uid)!==undefined).length;
+            const done = answeredCount >= total;
+            return `<div class="chip bg-white px-3 py-2 flex items-center gap-2 text-sm font-semibold ${done?'matched-chip':''}">
+              <span class="text-xl">${p.emoji}</span> ${esc(p.name)}
+              <span class="text-xs text-gray-500">${done ? '✅ done' : `${answeredCount}/${total}`}</span>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+      <div class="flex w-full gap-3">
+        <button data-action="find-matches" class="btn bg-pink-300 flex-1 py-4 text-lg">🔎 Find Matches</button>
+        <button data-action="end-game" class="btn bg-red-300 flex-1 py-4 text-lg">End Game 🛑</button>
+      </div>
+    </div>
+  `;
+}
+
+function screenQuestionList(){
+  const room = state.room;
+  const remaining = timerRemaining(room);
+  const me = room.players[state.uid];
+
+  const rows = room.questions.map((q,qi)=>{
+    const ans = myAnswer(room, qi);
+    const optLabel = ans === 'A' ? q.optionA : (ans === 'B' ? q.optionB : null);
+    const matchInfo = myMatchInfo(room, qi);
+    let right, rowCls, actionAttr, disabled = '';
+    if(matchInfo){
+      const otherUid = matchInfo.players.find(u=>u!==state.uid);
+      const other = room.players[otherUid];
+      right = `<span class="text-xs font-bold text-green-600 shrink-0">🔥 ${other?esc(other.name):'matched'}</span>`;
+      rowCls = 'matched-chip'; actionAttr = ''; disabled = 'disabled';
+    } else if(!optLabel){
+      right = `<span class="text-xs text-gray-400 shrink-0">not answered</span>`;
+      rowCls = 'opacity-50'; actionAttr = ''; disabled = 'disabled';
+    } else {
+      right = `<span class="text-xs font-bold text-pink-600 shrink-0">Find match →</span>`;
+      rowCls = ''; actionAttr = `data-action="open-question" data-qindex="${qi}"`;
+    }
+    return `<button ${actionAttr} ${disabled} class="chip ${rowCls} bg-white w-full px-3 py-3 flex items-center gap-3 text-left mb-2">
+      <span class="text-2xl shrink-0">${optLabel ? optLabel.emoji : '❓'}</span>
+      <div class="flex-1 min-w-0">
+        <div class="text-xs text-gray-500 leading-tight truncate">${esc(q.text)}</div>
+        <div class="text-sm font-semibold truncate">${optLabel ? esc(optLabel.label) : '—'}</div>
+      </div>
+      ${right}
+    </button>`;
+  }).join('');
+
+  app.innerHTML = `
+    <div class="w-full max-w-sm flex flex-col items-center gap-3 mt-2">
+      <div class="w-full flex items-center justify-between px-1">
+        <span class="text-white font-bold drop-shadow">🔥 ${me?me.matchCount:0} match${me&&me.matchCount===1?'':'es'}</span>
         ${Logo('text-xl')}
       </div>
       ${remaining!==null ? `
-        <div class="w-full timerbar-outer"><div id="timerInnerBar" class="timerbar-inner" style="width:${(remaining/room.settings.timerSeconds*100)}%"></div></div>
+        <div class="w-full timerbar-outer"><div id="timerInnerBar" class="timerbar-inner" style="width:${(remaining/room.settings.matchingTimerSeconds*100)}%"></div></div>
+        <div class="text-white font-bold" id="timerText">${Math.ceil(remaining)}s left</div>
       ` : ''}
+      <div class="sticker w-full p-3 text-center">
+        <div class="font-stamp text-base">GO FIND YOUR MATCHES 👀</div>
+        <div class="text-xs text-gray-500">Tap a question, then tap who you think picked the same as you.</div>
+      </div>
+      <div class="w-full">${rows}</div>
+    </div>
+  `;
+}
+
+function screenMatchChooser(qIndex){
+  const room = state.room;
+  const q = room.questions[qIndex];
+  const ans = myAnswer(room, qIndex);
+  const optLabel = ans === 'A' ? q.optionA : q.optionB;
+  const others = Object.entries(room.players||{}).filter(([uid])=>uid!==state.uid);
+  const pairs = (room.confirmedPairs && room.confirmedPairs[qIndex]) || {};
+  const answeredSet = new Set(Object.keys((room.answers && room.answers[qIndex]) || {}));
+
+  app.innerHTML = `
+    <div class="w-full max-w-sm flex flex-col items-center gap-4 mt-2">
+      <div class="w-full px-1">
+        <button data-action="back-to-list" class="text-white font-bold drop-shadow">← Back to questions</button>
+      </div>
       <div class="sticker w-full p-4 text-center">
-        <div class="font-stamp text-lg mb-1">GO FIND YOUR MATCH 👀</div>
-        <div class="text-sm text-gray-500">Ask around, then tap who you think picked the same as you.</div>
+        <div class="text-xs text-gray-500 mb-1">${esc(q.text)}</div>
+        <div class="font-stamp text-lg">${optLabel.emoji} ${esc(optLabel.label)}</div>
+        <div class="text-xs text-gray-500 mt-1">Who else picked this?</div>
       </div>
       <div class="grid grid-cols-2 gap-3 w-full">
         ${others.map(([uid,p])=>{
@@ -1043,7 +1169,7 @@ function screenHunting(){
           const tried = state.ui.triedThisQ.has(uid);
           const already = pairs[pairKey(state.uid,uid)];
           const cls = already ? 'matched-chip' : (tried ? 'tried-chip' : '');
-          return `<button data-action="attempt-match" data-uid="${uid}" class="chip ${cls} bg-white px-3 py-4 flex flex-col items-center gap-1" ${already?'disabled':''} id="chip-${uid}">
+          return `<button data-action="attempt-match" data-qindex="${qIndex}" data-uid="${uid}" class="chip ${cls} bg-white px-3 py-4 flex flex-col items-center gap-1" ${already?'disabled':''} id="chip-${uid}">
             <span class="text-3xl">${p.emoji}</span>
             <span class="font-semibold text-sm">${esc(p.name)}</span>
             <span class="text-xs text-gray-400">${already? '✅ matched' : (answered ? 'ready' : 'still answering…')}</span>
@@ -1054,72 +1180,84 @@ function screenHunting(){
   `;
 }
 
-function screenMatchedWaiting(matchInfo){
+function screenHostMatching(){
   const room = state.room;
-  const otherUid = matchInfo.players.find(u=>u!==state.uid);
-  const other = room.players[otherUid];
-  const q = room.questions[room.currentQuestionIndex];
-  const optLabel = matchInfo.option === 'A' ? q.optionA : q.optionB;
-  app.innerHTML = `
-    <div class="w-full max-w-sm flex flex-col items-center gap-6 mt-16 text-center">
-      ${Logo('text-3xl')}
-      <div class="sticker w-full p-6 flex flex-col items-center gap-3">
-        <div class="text-5xl">${other ? other.emoji : '🎉'}</div>
-        <div class="font-stamp text-xl">You matched with ${esc(other ? other.name : 'someone')}!</div>
-        <div class="text-sm text-gray-500">Both picked ${optLabel.emoji} ${esc(optLabel.label)}</div>
-        <div class="animate-pulse font-semibold mt-2">Waiting for the next question… ⏳</div>
-        <div class="mt-2 font-stamp text-lg">🔥 Matches so far: ${room.players[state.uid].matchCount}</div>
-      </div>
-    </div>
-  `;
-}
-
-function screenHostGame(){
-  const room = state.room;
-  const qIndex = room.currentQuestionIndex;
-  const q = room.questions[qIndex];
-  const players = Object.entries(room.players||{});
-  const answeredCount = Object.keys((room.answers && room.answers[qIndex]) || {}).length;
-  const matchedUids = new Set();
-  Object.values((room.confirmedPairs && room.confirmedPairs[qIndex]) || {}).forEach(p=>p.players.forEach(u=>matchedUids.add(u)));
+  const players = Object.entries(room.players||{}).sort((a,b)=>b[1].matchCount-a[1].matchCount);
   const remaining = timerRemaining(room);
+  const medals = ['🥇','🥈','🥉'];
 
   app.innerHTML = `
     <div class="w-full max-w-md flex flex-col items-center gap-4 mt-2">
       <div class="w-full flex items-center justify-between px-1">
-        <span class="text-white font-bold drop-shadow">HOST · Q${qIndex+1}/${room.questions.length}</span>
+        <span class="text-white font-bold drop-shadow">HOST · Find Matches</span>
         ${Logo('text-xl')}
       </div>
       ${remaining!==null ? `
-        <div class="w-full timerbar-outer"><div id="timerInnerBar" class="timerbar-inner" style="width:${(remaining/room.settings.timerSeconds*100)}%"></div></div>
+        <div class="w-full timerbar-outer"><div id="timerInnerBar" class="timerbar-inner" style="width:${(remaining/room.settings.matchingTimerSeconds*100)}%"></div></div>
         <div class="text-white font-bold" id="timerText">${Math.ceil(remaining)}s left</div>
-      ` : `<div class="text-white font-bold">No timer — advance manually</div>`}
-
-      <div class="sticker w-full p-5 text-center">
-        <div class="font-stamp text-xl mb-2">${esc(q.text)}</div>
-        <div class="flex justify-around text-2xl font-bold">
-          <div>${q.optionA.emoji} ${esc(q.optionA.label)}</div>
-          <div>${q.optionB.emoji} ${esc(q.optionB.label)}</div>
-        </div>
-      </div>
+      ` : `<div class="text-white font-bold">No timer set — end whenever you're ready</div>`}
 
       <div class="sticker w-full p-4">
-        <div class="font-stamp text-sm mb-2">${answeredCount}/${players.length} answered · ${matchedUids.size} matched</div>
-        <div class="flex flex-wrap gap-2 max-h-32 overflow-y-auto scrollable">
-          ${players.map(([uid,p])=>{
-            const answered = room.answers && room.answers[qIndex] && room.answers[qIndex][uid];
-            const matched = matchedUids.has(uid);
-            return `<div class="chip bg-white px-2 py-1 flex items-center gap-1 text-xs font-semibold ${matched?'matched-chip':''}">
-              ${p.emoji} ${esc(p.name)} ${matched?'🔥':(answered?'✅':'⏳')}
-            </div>`;
-          }).join('')}
+        <div class="font-stamp text-base mb-2">🏆 LIVE LEADERBOARD</div>
+        <div class="flex flex-col gap-2 max-h-80 overflow-y-auto scrollable">
+          ${players.map(([uid,p],i)=>`
+            <div class="flex items-center gap-3 py-1">
+              <div class="text-lg w-7 text-center">${medals[i]||(i+1)}</div>
+              <div class="text-2xl">${p.emoji}</div>
+              <div class="flex-1 font-semibold">${esc(p.name)}</div>
+              <div class="font-stamp">${p.matchCount} 🔥</div>
+            </div>
+          `).join('')}
         </div>
       </div>
 
-      <div class="flex w-full gap-3">
-        <button data-action="next-question" class="btn bg-yellow-300 flex-1 py-4 text-lg">Next ⏭️</button>
-        <button data-action="end-game" class="btn bg-red-300 flex-1 py-4 text-lg">End Game 🛑</button>
-      </div>
+      <button data-action="end-game" class="btn bg-red-300 w-full py-4 text-lg">End Game 🛑</button>
+    </div>
+  `;
+}
+
+// The top 5 (question, most-picked-option) pairs by how many players picked
+// that option — a fun "here's what the group actually thinks" reveal,
+// distinct from the match-count leaderboard. Only questions with at least
+// one answer are eligible (relevant if the host ended the game early).
+function computeTopAnswers(room){
+  const players = room.players || {};
+  const rows = room.questions.map((q, qi) => {
+    let countA = 0, countB = 0;
+    Object.keys(players).forEach(uid => {
+      const ans = myAnswerFor(room, qi, uid);
+      if(ans === 'A') countA++;
+      else if(ans === 'B') countB++;
+    });
+    const answeredCount = countA + countB;
+    const top = countA >= countB ? { opt: q.optionA, count: countA } : { opt: q.optionB, count: countB };
+    return { qi, text: q.text, top, answeredCount };
+  });
+  return rows
+    .filter(r => r.answeredCount > 0)
+    .sort((a,b) => b.top.count - a.top.count || b.answeredCount - a.answeredCount)
+    .slice(0, 5);
+}
+
+function revealPanelHtml(room){
+  const top5 = computeTopAnswers(room);
+  if(!top5.length){
+    return `<div class="sticker w-full p-4 text-center text-sm text-gray-500 fade-in">No answers to reveal.</div>`;
+  }
+  return `
+    <div class="sticker w-full p-4 flex flex-col gap-3 fade-in">
+      <div class="font-stamp text-base text-center">🔍 TOP GROUP ANSWERS</div>
+      ${top5.map((r,i)=>`
+        <div class="flex items-center gap-3 border-b-2 border-black/10 pb-2 last:border-0 last:pb-0">
+          <div class="font-stamp text-lg w-6 text-center">${i+1}</div>
+          <div class="text-2xl shrink-0">${r.top.opt.emoji}</div>
+          <div class="flex-1 min-w-0">
+            <div class="text-xs text-gray-500 leading-tight truncate">${esc(r.text)}</div>
+            <div class="text-sm font-semibold truncate">${esc(r.top.opt.label)}</div>
+          </div>
+          <div class="text-sm font-bold text-pink-600 shrink-0">${r.top.count}/${r.answeredCount}</div>
+        </div>
+      `).join('')}
     </div>
   `;
 }
@@ -1142,6 +1280,10 @@ function screenPodium(){
           </div>
         `).join('')}
       </div>
+
+      <button data-action="toggle-reveal" class="btn bg-blue-200 w-full py-3 text-base">${state.ui.showReveal ? 'Hide' : '🔍 Reveal'} Top Answers</button>
+      ${state.ui.showReveal ? revealPanelHtml(room) : ''}
+
       ${state.isHost ? `
         <div class="flex w-full gap-3">
           <button data-action="rematch" class="btn bg-green-300 flex-1 py-4 text-lg">Rematch 🔁</button>
@@ -1156,11 +1298,11 @@ function screenPodium(){
 /* MATCH OVERLAY                                                       */
 /* ------------------------------------------------------------------ */
 
-function showMatchOverlay(matchInfo){
+function showMatchOverlay(matchInfo, qIndex){
   const room = state.room;
   const otherUid = matchInfo.players.find(u=>u!==state.uid);
   const other = room.players[otherUid] || { name:'Someone', emoji:'🎉' };
-  const q = room.questions[room.currentQuestionIndex];
+  const q = room.questions[qIndex];
   const optLabel = matchInfo.option === 'A' ? q.optionA : q.optionB;
 
   const overlay = document.createElement('div');
@@ -1206,21 +1348,50 @@ function dismissMatchOverlay(){
 /* ------------------------------------------------------------------ */
 
 function demoBarHtml(room){
-  const qIndex = room.currentQuestionIndex;
+  if(room.status === 'answering'){
+    return `
+      <div style="height:48px"></div>
+      <div class="fixed top-0 left-0 right-0 z-50 bg-black/85 text-white flex items-center justify-between gap-2 px-3 py-2 text-sm">
+        <span class="font-bold">🎛 HOST</span>
+        <div class="flex gap-2">
+          <button data-action="find-matches" class="btn bg-pink-300 px-3 py-1 text-xs" style="box-shadow:3px 3px 0 #000;">🔎 Find Matches</button>
+          <button data-action="end-game" class="btn bg-red-300 px-3 py-1 text-xs" style="box-shadow:3px 3px 0 #000;">End🛑</button>
+        </div>
+      </div>`;
+  }
   const remaining = timerRemaining(room);
   return `
     <div style="height:48px"></div>
     <div class="fixed top-0 left-0 right-0 z-50 bg-black/85 text-white flex items-center justify-between gap-2 px-3 py-2 text-sm">
-      <span class="font-bold">🎛 HOST · Q${qIndex+1}/${room.questions.length}${remaining!==null?' · '+Math.ceil(remaining)+'s':''}</span>
-      <div class="flex gap-2">
-        <button data-action="next-question" class="btn bg-yellow-300 px-3 py-1 text-xs" style="box-shadow:3px 3px 0 #000;">Next⏭️</button>
-        <button data-action="end-game" class="btn bg-red-300 px-3 py-1 text-xs" style="box-shadow:3px 3px 0 #000;">End🛑</button>
-      </div>
+      <span class="font-bold">🎛 HOST${remaining!==null?' · '+Math.ceil(remaining)+'s':''}</span>
+      <button data-action="end-game" class="btn bg-red-300 px-3 py-1 text-xs" style="box-shadow:3px 3px 0 #000;">End🛑</button>
     </div>`;
 }
 function injectDemoBar(room){
-  if(state.mode !== 'demo' || room.status !== 'question') return;
+  if(state.mode !== 'demo' || (room.status !== 'answering' && room.status !== 'matching')) return;
   app.insertAdjacentHTML('afterbegin', demoBarHtml(room));
+}
+
+// Diffs the current set of "questions I have a confirmed match on" against
+// what we've already accounted for, so a newly-appeared match — whether I
+// caused it by tapping a name, or someone else caused it (e.g. a demo bot
+// matching with me in the background) — triggers exactly one overlay. The
+// first call after entering a fresh matching round only establishes the
+// baseline (no overlay for matches that already existed, e.g. on resume).
+function detectNewMatch(room){
+  if(!state.ui.matchingBaselineDone){
+    state.ui.matchedQIndexSet = new Set();
+    room.questions.forEach((_,qi)=>{ if(myMatchInfo(room,qi)) state.ui.matchedQIndexSet.add(qi); });
+    state.ui.matchingBaselineDone = true;
+    return null;
+  }
+  for(let qi=0; qi<room.questions.length; qi++){
+    if(!state.ui.matchedQIndexSet.has(qi) && myMatchInfo(room,qi)){
+      state.ui.matchedQIndexSet.add(qi);
+      return qi;
+    }
+  }
+  return null;
 }
 
 function render(){
@@ -1242,32 +1413,39 @@ function render(){
   // (with a small floating control bar) instead of the host-only view.
   if(state.isHost && state.mode !== 'demo'){
     if(room.status === 'lobby') return screenHostSetup();
-    if(room.status === 'question') return screenHostGame();
+    if(room.status === 'answering') return screenHostAnswering();
+    if(room.status === 'matching') return screenHostMatching();
     if(room.status === 'ended') return screenPodium();
     return;
   }
 
   if(room.status === 'lobby') return state.isHost ? screenHostSetup() : screenLobby();
   if(room.status === 'ended') return screenPodium();
-  if(room.status === 'question'){
-    const qIndex = room.currentQuestionIndex;
-    const ans = myAnswer(room, qIndex);
-    const matchInfo = myMatchInfo(room, qIndex);
-    if(matchInfo){
-      if(state.ui.lastOverlayQIndex !== qIndex){
-        state.ui.lastOverlayQIndex = qIndex;
-        screenHunting(); // render hunting first so overlay has something behind it
-        injectDemoBar(room);
-        showMatchOverlay(matchInfo);
-      } else {
-        screenMatchedWaiting(matchInfo);
-        injectDemoBar(room);
-      }
-      return;
-    }
-    if(ans === undefined){ screenAnswering(); injectDemoBar(room); return; }
-    screenHunting();
+
+  if(room.status === 'answering'){
+    const qIndex = nextUnansweredIndex(room);
+    if(qIndex === -1) screenAnsweringDone();
+    else screenAnswering(qIndex);
     injectDemoBar(room);
+    return;
+  }
+
+  if(room.status === 'matching'){
+    const newQIndex = detectNewMatch(room);
+    if(newQIndex !== null){
+      state.ui.activeChooserQIndex = null; // a fresh match always drops back to the list
+      // Multiple matches can land in quick succession (e.g. several bots
+      // matching with "You" back-to-back in Demo Mode, or just fast real
+      // players). Only one overlay <div> may exist at a time — queue the
+      // rest and dismissMatchOverlay() will pop the next one — otherwise a
+      // second showMatchOverlay() call while one is already up orphans the
+      // first overlay's element (never removed, permanently blocking taps).
+      if(state._currentOverlay) state.ui.pendingMatchOverlays.push(newQIndex);
+    }
+    if(state.ui.activeChooserQIndex !== null) screenMatchChooser(state.ui.activeChooserQIndex);
+    else screenQuestionList();
+    injectDemoBar(room);
+    if(newQIndex !== null && !state._currentOverlay) showMatchOverlay(myMatchInfo(room, newQIndex), newQIndex);
     return;
   }
 }
@@ -1280,7 +1458,7 @@ function flushPendingRoom(){
   }
 }
 
-let lastQIndex = null, lastStatus = null;
+let lastStatus = null;
 
 function onRoomUpdate(room, force=false){
   if(room === null){
@@ -1292,8 +1470,8 @@ function onRoomUpdate(room, force=false){
     state.pendingRoom = room;
     return;
   }
-  const structuralChange = force || room.status !== lastStatus || room.currentQuestionIndex !== lastQIndex;
-  lastStatus = room.status; lastQIndex = room.currentQuestionIndex;
+  const structuralChange = force || room.status !== lastStatus;
+  lastStatus = room.status;
   state.room = room;
 
   if(state.isHost && room.status === 'lobby' && document.getElementById('lobbyPlayersList')){
@@ -1301,7 +1479,11 @@ function onRoomUpdate(room, force=false){
     return;
   }
 
-  if(structuralChange) state.ui.triedThisQ = new Set();
+  if(structuralChange && room.status === 'matching'){
+    state.ui.matchingBaselineDone = false;
+    state.ui.activeChooserQIndex = null;
+    state.ui.pendingMatchOverlays = [];
+  }
   render();
 }
 
@@ -1314,10 +1496,13 @@ let unsubscribeRoom = null;
 function goHome(){
   if(unsubscribeRoom){ unsubscribeRoom(); unsubscribeRoom = null; }
   dismissMatchOverlay();
-  clearTimerTick();
+  // Not clearing the timer tick here: it's a single interval started once in
+  // boot() for the lifetime of the tab, and its callback already no-ops when
+  // state.room is null — clearing it would mean the timer silently never
+  // works again for any later game started in this same tab.
   localStorage.removeItem('match_session');
   state.roomCode = null; state.room = null; state.isHost = false; state.mode = null; state.demo = null;
-  state.ui = { lastOverlayQIndex:null, triedThisQ:new Set() };
+  state.ui = { matchingBaselineDone:false, matchedQIndexSet:new Set(), activeChooserQIndex:null, triedThisQ:new Set(), pendingMatchOverlays:[], showReveal:false };
   history.replaceState(null,'',location.pathname);
   state.screen = 'landing';
   render();
@@ -1350,7 +1535,7 @@ async function handleAction(action, ds, targetEl){
 
     if(action === 'create-room'){
       const name = document.getElementById('hostName').value.trim() || 'Host';
-      const password = document.getElementById('hostPassword').value;
+      const password = document.getElementById('hostPassword').value.trim();
       if(!password || password.length < 4){ toast('Set a recovery password (4+ characters)'); return; }
       let fb;
       try{ toast('Connecting…', 1200); fb = await ensureFirebase(); }
@@ -1370,7 +1555,7 @@ async function handleAction(action, ds, targetEl){
 
     if(action === 'submit-reclaim'){
       const code = document.getElementById('reclaimCode').value.trim().toUpperCase();
-      const password = document.getElementById('reclaimPassword').value;
+      const password = document.getElementById('reclaimPassword').value.trim();
       if(code.length !== 4){ toast('Room codes are 4 letters'); return; }
       if(!password){ toast('Enter your recovery password'); return; }
       let fb;
@@ -1446,22 +1631,35 @@ async function handleAction(action, ds, targetEl){
     if(action === 'start-game'){
       const enabled = state.questionBank.filter(q=>q.enabled);
       if(enabled.length === 0){ toast('Select at least one question'); return; }
-      const timerSeconds = parseInt(document.getElementById('timerSelect').value, 10);
+      const timerOn = document.getElementById('matchingTimerToggle').checked;
+      const matchingTimerSeconds = timerOn ? parseInt(document.getElementById('matchingTimerDuration').value, 10) : 0;
       let total = parseInt(document.getElementById('totalQuestionsInput').value, 10) || enabled.length;
       total = Math.max(1, Math.min(total, enabled.length));
       const chosen = shuffle(enabled).slice(0,total).map(q=>({ id:q.id, text:q.text, optionA:q.optionA, optionB:q.optionB }));
       const players = state.room ? state.room.players : {};
       if(Object.keys(players||{}).length === 0){ toast('Waiting on players? You can still start to test.', 2200); }
-      await activeStore().startGame(state.roomCode, chosen, timerSeconds, false, players);
+      await activeStore().startGame(state.roomCode, chosen, matchingTimerSeconds, false, players);
       return;
     }
 
     if(action === 'answer-a') return chooseAnswer('A');
     if(action === 'answer-b') return chooseAnswer('B');
 
+    if(action === 'open-question'){
+      state.ui.activeChooserQIndex = parseInt(ds.qindex, 10);
+      state.ui.triedThisQ = new Set();
+      render();
+      return;
+    }
+    if(action === 'back-to-list'){
+      state.ui.activeChooserQIndex = null;
+      render();
+      return;
+    }
+
     if(action === 'attempt-match'){
       const otherUid = ds.uid;
-      const qIndex = state.room.currentQuestionIndex;
+      const qIndex = parseInt(ds.qindex, 10);
       const chipEl = document.getElementById('chip-'+otherUid);
       let result;
       try{
@@ -1482,12 +1680,23 @@ async function handleAction(action, ds, targetEl){
 
     if(action === 'dismiss-match'){
       dismissMatchOverlay();
-      render();
+      state.ui.activeChooserQIndex = null;
+      render(); // list (or whatever screen) renders first — this can itself show
+                // the next overlay via detectNewMatch(), so only pop our own
+                // queue if render() didn't already put one up (checked below),
+                // or two overlay <div>s stack and the first is never removed.
+      if(!state._currentOverlay){
+        const queued = state.ui.pendingMatchOverlays.shift();
+        if(queued !== undefined){
+          const mi = myMatchInfo(state.room, queued);
+          if(mi) showMatchOverlay(mi, queued);
+        }
+      }
       return;
     }
 
-    if(action === 'next-question'){
-      await activeStore().nextQuestion(state.roomCode, state.room);
+    if(action === 'find-matches'){
+      await activeStore().startMatching(state.roomCode);
       return;
     }
     if(action === 'end-game'){
@@ -1495,7 +1704,13 @@ async function handleAction(action, ds, targetEl){
       return;
     }
     if(action === 'rematch'){
+      state.ui.showReveal = false;
       await activeStore().rematch(state.roomCode, state.room.players);
+      return;
+    }
+    if(action === 'toggle-reveal'){
+      state.ui.showReveal = !state.ui.showReveal;
+      render();
       return;
     }
   }catch(err){
@@ -1527,15 +1742,15 @@ function startTimerTick(){
   clearTimerTick();
   state.timerTick = setInterval(()=>{
     const room = state.room;
-    if(!room || room.status !== 'question' || !room.settings || !room.settings.timerSeconds) return;
+    if(!room || room.status !== 'matching' || !room.settings || !room.settings.matchingTimerSeconds) return;
     const remaining = timerRemaining(room);
     const bar = document.getElementById('timerInnerBar');
-    if(bar) bar.style.width = Math.max(0,(remaining/room.settings.timerSeconds*100)) + '%';
+    if(bar) bar.style.width = Math.max(0,(remaining/room.settings.matchingTimerSeconds*100)) + '%';
     const txt = document.getElementById('timerText');
     if(txt) txt.textContent = Math.ceil(remaining) + 's left';
     if(state.isHost && remaining <= 0 && !advancing){
       advancing = true;
-      activeStore().nextQuestion(state.roomCode, room).finally(()=>{ setTimeout(()=>advancing=false, 1200); });
+      activeStore().endGame(state.roomCode).finally(()=>{ setTimeout(()=>advancing=false, 1200); });
     }
   }, 300);
 }
