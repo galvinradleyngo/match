@@ -38,14 +38,28 @@ project:
    doesn't exist yet.
 
 Then deploy the security rules in this repo (they scope writes to
-signed-in anonymous users and stop anyone from stealing another room's
-`hostId`):
+signed-in anonymous users):
 
 ```bash
 npm install -g firebase-tools   # once
 firebase login
 firebase deploy --only firestore:rules
 ```
+
+**If you deployed an earlier version of this app**, redeploy
+`firestore.rules` again — it changed to support the host recovery/reclaim
+flow below.
+
+3. **Enable TTL on `expiresAt`** so old games actually get deleted (see
+   **Data retention** below) — Firestore's TTL feature isn't something a
+   security rule or the client SDK can turn on, so this is a one-time
+   console/CLI step:
+   - Console: **Firestore Database → TTL** tab → **Create policy** →
+     collection group `rooms`, field `expiresAt`.
+   - Or via CLI: `gcloud firestore fields ttls update expiresAt --collection-group=rooms --enable-ttl --project=match-57f24`
+     (takes a few minutes to take effect; Firestore then sweeps expired
+     documents automatically in the background, usually within 24h of
+     expiry, not instantly).
 
 Demo Mode never touches Firebase, so you can try the whole game loop before
 doing any of this.
@@ -90,12 +104,42 @@ push `index.html` to a `gh-pages` branch.
   variations (a classic strike, a campfire drop, or a spark clash), then a
   confetti burst using flame-emoji shaped particles where supported.
 
+## Data retention
+
+**Games are deleted after 2 weeks.** Every room stores an `expiresAt`
+(creation time + 14 days), and — once you've enabled the TTL policy above —
+Firestore automatically deletes the whole room document (players, answers,
+scores, everything) once that passes. The host setup screen shows a live
+"auto-deletes in N days" countdown so this isn't a surprise.
+
+When a host creates a room, they set a **recovery password**. If they get
+disconnected, close the tab, or switch phones before the 2 weeks are up,
+they can tap **"Hosted a game before? Reclaim it"** on the landing screen
+and enter the room code + that password to become host again (this also
+resets the room's 2-week clock). Note this password is a casual shared
+secret at the same trust level as the room code itself — see **Security
+model** below for why it can't be more than that without a backend.
+
+## Security model
+
+There's no backend beyond Firestore — no accounts, no server holding a
+secret. The security rules only gate *authentication* (you must be
+signed in, anonymously, to write anything) and prevent a bare `create`
+from claiming someone else's uid as host. Beyond that, integrity —
+match confirmation, the host recovery password, question-set contents —
+is enforced by the app's own client-side logic, not by rules that could
+resist a user opening devtools and issuing writes directly. That's an
+intentional, documented trade-off for a zero-backend casual party game,
+not an oversight: making the host password or match confirmation
+tamper-proof against a determined cheater would require a Cloud Function
+holding a secret the client never sees, which this project doesn't have.
+The rules and their reasoning are commented in `firestore.rules`, and the
+new-fields behavior is covered by an emulator-based rules test suite (not
+checked into the repo, but reproducible with
+`@firebase/rules-unit-testing` against `firestore.rules`).
+
 ## Notes
 
-- All Firebase/network calls are deferred until a Host or Join action needs
-  them, so the landing screen and Demo Mode work instantly even if the
-  network is slow or a CDN is blocked.
-- There's no backend beyond Firestore — the security rules plus
-  transaction-based match confirmation are the only integrity guarantees
-  (fine for a casual party game; not designed to resist a determined
-  cheater with devtools access).
+- All Firebase/network calls are deferred until a Host, Join, or Reclaim
+  action needs them, so the landing screen and Demo Mode work instantly
+  even if the network is slow or a CDN is blocked.

@@ -3,16 +3,30 @@ rules_version = '2';
 // MATCH uses anonymous auth only (no accounts/passwords) — anyone with the
 // Firebase config can read/write, same trust model as a Kahoot/Jackbox room:
 // a short-lived room code is the access control, not a login.
+//
+// The host recovery password is enforced by the app's client code (it
+// checks the password before writing a new hostId), NOT by these rules —
+// and it can't be, without a server. Firestore rules can only compare
+// against data already in the document, and rooms are publicly readable
+// (players need to read status/questions/etc.), so any comparison a rule
+// could make against the stored password hash is something a devtools user
+// could already read and replay. A real guarantee here would need a Cloud
+// Function holding the password check server-side, which this project
+// doesn't have. Same caveat already applies to match confirmation and
+// everything else: rules stop unauthenticated access, not a determined
+// cheater with devtools open.
+//
+// Rooms expire via a Firestore TTL policy on the `expiresAt` field
+// (configured in the console/CLI, not here) — see README "One-time
+// Firebase setup". TTL deletes bypass these rules entirely.
 service cloud.firestore {
   match /databases/{database}/documents {
     match /rooms/{roomCode} {
       allow read: if true;
-      // Only signed-in (anonymous) users may create or update rooms, and a
-      // room's hostId/hostName can't be hijacked by a later write.
+      // Only signed-in (anonymous) users may create or update rooms.
       allow create: if request.auth != null
         && request.resource.data.hostId == request.auth.uid;
-      allow update: if request.auth != null
-        && request.resource.data.hostId == resource.data.hostId;
+      allow update: if request.auth != null;
       allow delete: if false;
     }
   }
