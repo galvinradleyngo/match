@@ -50,19 +50,31 @@ firebase deploy --only firestore:rules
 `firestore.rules` again — it changed to support the host recovery/reclaim
 flow below.
 
-3. **Enable TTL on `expiresAt`** so old games actually get deleted (see
-   **Data retention** below) — Firestore's TTL feature isn't something a
-   security rule or the client SDK can turn on, so this is a one-time
-   console/CLI step:
-   - Console: **Firestore Database → TTL** tab → **Create policy** →
-     collection group `rooms`, field `expiresAt`.
-   - Or via CLI: `gcloud firestore fields ttls update expiresAt --collection-group=rooms --enable-ttl --project=match-57f24`
-     (takes a few minutes to take effect; Firestore then sweeps expired
-     documents automatically in the background, usually within 24h of
-     expiry, not instantly).
-
 Demo Mode never touches Firebase, so you can try the whole game loop before
 doing any of this.
+
+### Optional: physically delete expired games via Firestore TTL
+
+By default, expired rooms aren't deleted from Firestore — the app just
+refuses to join/reclaim/resume them (see **Data retention** below), which
+needs no extra setup and costs nothing. If you'd rather old room documents
+actually get erased, Firestore has a native TTL (time-to-live) feature that
+does this automatically in the background — but the API that turns it on
+requires the project to have a **billing account linked** (Blaze plan),
+even though normal usage for a game like this stays well within the free
+tier (Blaze only charges for usage *beyond* the free quotas). This is a
+Google Cloud policy on that specific API, not a cost you'll likely see.
+
+If you want that: Firebase console → **upgrade to Blaze** (add a payment
+method) → then, in [Cloud Shell](https://console.cloud.google.com/) or any
+terminal with `gcloud` installed and authenticated:
+```bash
+gcloud config set project match-57f24
+gcloud firestore fields ttls update expiresAt --collection-group=rooms --enable-ttl
+```
+Firestore sweeps expired documents in the background afterward (not
+instantly — usually within 24h of expiry). This is purely an optional
+cleanup step; skip it and the app still behaves correctly for players.
 
 ## Deploy
 
@@ -106,11 +118,15 @@ push `index.html` to a `gh-pages` branch.
 
 ## Data retention
 
-**Games are deleted after 2 weeks.** Every room stores an `expiresAt`
-(creation time + 14 days), and — once you've enabled the TTL policy above —
-Firestore automatically deletes the whole room document (players, answers,
-scores, everything) once that passes. The host setup screen shows a live
-"auto-deletes in N days" countdown so this isn't a surprise.
+**Games only stay active for 2 weeks.** Every room stores an `expiresAt`
+(creation time + 14 days). By default this is enforced app-side: joining,
+reclaiming, or resuming a room past its `expiresAt` is refused with a
+"this game has expired" message, same as if it didn't exist — the room
+document itself is small and harmless and is left in Firestore rather than
+physically deleted, unless you've opted into the Firestore TTL policy
+described above, in which case it's genuinely erased in the background.
+The host setup screen shows a live "stays active for N more days"
+countdown so this isn't a surprise.
 
 When a host creates a room, they set a **recovery password**. If they get
 disconnected, close the tab, or switch phones before the 2 weeks are up,
