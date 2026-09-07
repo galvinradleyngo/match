@@ -230,6 +230,7 @@ const state = {
     triedThisQ: new Set(),       // uid's we've tried & failed on the currently-open chooser (local only)
     pendingMatchOverlays: [],    // qIndexes with a detected-but-not-yet-shown overlay (see showMatchOverlay/dismissMatchOverlay)
     showReveal: false,           // podium screen: is the "top group answers" panel open
+    showQuestionBank: false,     // host setup screen: is the Question Bank sub-view open
   },
   timerTick: null,
   demo: null,             // demo store instance when in demo mode
@@ -796,6 +797,10 @@ function updateSelectedCount(){
   if(totalInput) totalInput.max = n || 1;
 }
 
+function screenLobbyHost(){
+  return state.ui.showQuestionBank ? screenQuestionBank() : screenHostSetup();
+}
+
 function screenHostSetup(){
   const room = state.room;
   const joinUrl = `${location.origin}${location.pathname}?room=${state.roomCode}`;
@@ -820,25 +825,12 @@ function screenHostSetup(){
         <div id="lobbyPlayersList" class="flex flex-wrap gap-2"></div>
       </div>
 
-      <div class="sticker w-full p-4 flex flex-col gap-3">
-        <div class="flex items-center justify-between">
-          <div class="font-stamp text-base">QUESTIONS (<span id="selectedCount">0</span> selected)</div>
+      <div class="sticker w-full p-4 flex items-center justify-between gap-3">
+        <div>
+          <div class="font-stamp text-base">📋 QUESTIONS</div>
+          <div class="text-xs text-gray-500"><span id="selectedCountSummary">${state.questionBank.filter(q=>q.enabled).length}</span> selected</div>
         </div>
-        <ul id="questionListUl" class="max-h-56 overflow-y-auto scrollable"></ul>
-
-        <div class="flex flex-col gap-2 bg-yellow-50 rounded-xl p-3 border-2 border-black/10">
-          <div class="font-semibold text-sm">➕ Add your own</div>
-          <input id="customText" type="text" placeholder="Question text" class="text-sm">
-          <div class="flex gap-2">
-            <input id="customEmojiA" type="text" maxlength="4" placeholder="🅰️" class="w-14 text-sm text-center">
-            <input id="customLabelA" type="text" placeholder="Option A" class="flex-1 text-sm">
-          </div>
-          <div class="flex gap-2">
-            <input id="customEmojiB" type="text" maxlength="4" placeholder="🅱️" class="w-14 text-sm text-center">
-            <input id="customLabelB" type="text" placeholder="Option B" class="flex-1 text-sm">
-          </div>
-          <button data-action="add-custom-question" class="btn bg-blue-200 py-2 text-sm">Add Question</button>
-        </div>
+        <button data-action="open-question-bank" class="btn bg-blue-200 px-4 py-3 text-sm shrink-0">Question Bank</button>
       </div>
 
       <div class="sticker w-full p-4 flex flex-col gap-3">
@@ -866,7 +858,6 @@ function screenHostSetup(){
     </div>
   `;
 
-  renderQuestionListUI();
   updateLobbyPlayersListUI();
 
   const timerToggle = document.getElementById('matchingTimerToggle');
@@ -877,6 +868,41 @@ function screenHostSetup(){
     document.getElementById('qrcode').innerHTML = '';
     new QRCode(document.getElementById('qrcode'), { text: joinUrl, width:150, height:150 });
   }catch(e){ /* qr lib unavailable, ignore */ }
+}
+
+function screenQuestionBank(){
+  app.innerHTML = `
+    <div class="w-full max-w-md flex flex-col items-center gap-4">
+      <div class="w-full flex items-center justify-between px-1">
+        <div class="font-stamp text-lg text-white drop-shadow">📋 QUESTION BANK</div>
+        <button data-action="close-question-bank" class="btn bg-yellow-300 px-4 py-2 text-sm">Done ✓</button>
+      </div>
+
+      <div class="sticker w-full p-4 flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+          <div class="font-stamp text-base">QUESTIONS (<span id="selectedCount">0</span> selected)</div>
+        </div>
+        <ul id="questionListUl" class="max-h-80 overflow-y-auto scrollable"></ul>
+
+        <div class="flex flex-col gap-2 bg-yellow-50 rounded-xl p-3 border-2 border-black/10">
+          <div class="font-semibold text-sm">➕ Add your own</div>
+          <input id="customText" type="text" placeholder="Question text" class="text-sm">
+          <div class="flex gap-2">
+            <input id="customEmojiA" type="text" maxlength="4" placeholder="🅰️" class="w-14 text-sm text-center">
+            <input id="customLabelA" type="text" placeholder="Option A" class="flex-1 text-sm">
+          </div>
+          <div class="flex gap-2">
+            <input id="customEmojiB" type="text" maxlength="4" placeholder="🅱️" class="w-14 text-sm text-center">
+            <input id="customLabelB" type="text" placeholder="Option B" class="flex-1 text-sm">
+          </div>
+          <button data-action="add-custom-question" class="btn bg-blue-200 py-2 text-sm">Add Question</button>
+        </div>
+      </div>
+
+      <button data-action="close-question-bank" class="btn bg-green-300 w-full py-3 text-base">Done — Back to Setup ✓</button>
+    </div>
+  `;
+  renderQuestionListUI();
 }
 
 function updateLobbyPlayersListUI(){
@@ -1412,14 +1438,14 @@ function render(){
   // lone human is both host and player, so they get the player screens below
   // (with a small floating control bar) instead of the host-only view.
   if(state.isHost && state.mode !== 'demo'){
-    if(room.status === 'lobby') return screenHostSetup();
+    if(room.status === 'lobby') return screenLobbyHost();
     if(room.status === 'answering') return screenHostAnswering();
     if(room.status === 'matching') return screenHostMatching();
     if(room.status === 'ended') return screenPodium();
     return screenUnknownStatus(room);
   }
 
-  if(room.status === 'lobby') return state.isHost ? screenHostSetup() : screenLobby();
+  if(room.status === 'lobby') return state.isHost ? screenLobbyHost() : screenLobby();
   if(room.status === 'ended') return screenPodium();
 
   if(room.status === 'answering'){
@@ -1497,9 +1523,17 @@ function onRoomUpdate(room, force=false){
   lastStatus = room.status;
   state.room = room;
 
-  if(state.isHost && room.status === 'lobby' && document.getElementById('lobbyPlayersList')){
-    updateLobbyPlayersListUI();
-    return;
+  if(state.isHost && room.status === 'lobby'){
+    // The Question Bank sub-view has no player-list UI to patch, and a full
+    // render() here would wipe whatever the host is mid-typing into the
+    // custom-question form every time a player joins. Nothing on that
+    // screen depends on live player data, so just skip — it's current
+    // again next time screenHostSetup() renders.
+    if(state.ui.showQuestionBank) return;
+    if(document.getElementById('lobbyPlayersList')){
+      updateLobbyPlayersListUI();
+      return;
+    }
   }
 
   if(structuralChange && room.status === 'matching'){
@@ -1525,7 +1559,7 @@ function goHome(){
   // works again for any later game started in this same tab.
   localStorage.removeItem('match_session');
   state.roomCode = null; state.room = null; state.isHost = false; state.mode = null; state.demo = null;
-  state.ui = { matchingBaselineDone:false, matchedQIndexSet:new Set(), activeChooserQIndex:null, triedThisQ:new Set(), pendingMatchOverlays:[], showReveal:false };
+  state.ui = { matchingBaselineDone:false, matchedQIndexSet:new Set(), activeChooserQIndex:null, triedThisQ:new Set(), pendingMatchOverlays:[], showReveal:false, showQuestionBank:false };
   history.replaceState(null,'',location.pathname);
   state.screen = 'landing';
   render();
@@ -1617,6 +1651,17 @@ async function handleAction(action, ds, targetEl){
       state.roomCode = code;
       unsubscribeRoom = activeStore().subscribe(code, onRoomUpdate);
       saveSession();
+      return;
+    }
+
+    if(action === 'open-question-bank'){
+      state.ui.showQuestionBank = true;
+      render();
+      return;
+    }
+    if(action === 'close-question-bank'){
+      state.ui.showQuestionBank = false;
+      render();
       return;
     }
 
